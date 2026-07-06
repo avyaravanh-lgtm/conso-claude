@@ -1,0 +1,6 @@
+# Artefacts de build — regénérés par ./build.sh
+Conso Claude.app/
+Conso Claude.zip
+.build/
+
+.DS_Store
