@@ -5,11 +5,7 @@
     Tray peint le % RESTANT dans l'icône (Variante A : chiffre plein sur tuile ivoire),
     popover WebView2 (HTML/CSS repris tel quel du mac), avion-banderole overlay
     click-through, seuils/phrases identiques.
-
-    Build (sur Windows, SDK .NET 8 requis) :
-        dotnet publish -c Release -r win-x64 --self-contained false
-    ou pour un exe autonome :
-        dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
+    Instructions de build : voir README.md (dossier windows/).
   -->
 
   <PropertyGroup>
