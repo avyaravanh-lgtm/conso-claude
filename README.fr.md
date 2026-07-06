@@ -33,9 +33,12 @@ banderole, partagé avec l'outil d'aperçu du scratchpad), `phrases.json`
    - **Prérequis : Claude Code installé et connecté** (l'app lit son token OAuth
      dans le trousseau — c'est lui qui fournit les données de conso).
    - Dézipper, glisser `Conso Claude.app` dans `/Applications`.
-   - Premier lancement : l'app n'est pas notarisée → macOS bloque. **Clic droit
-     → Ouvrir**, ou Réglages → Confidentialité et sécurité → « Ouvrir quand
-     même ». (Alternative terminal : `xattr -d com.apple.quarantine "/Applications/Conso Claude.app"`.)
+   - Premier lancement : l'app n'est pas notarisée → macOS la bloque (« logiciel
+     malveillant »). Cliquer **« Terminer »** (pas « Placer dans la corbeille »),
+     puis Réglages Système → Confidentialité et sécurité → tout en bas,
+     **« Ouvrir quand même »**. Une seule fois. (Le clic droit → Ouvrir ne
+     suffit plus depuis macOS 15. Alternative terminal :
+     `xattr -d com.apple.quarantine "/Applications/Conso Claude.app"`.)
    - Une boîte « security souhaite accéder à "Claude Code-credentials" » peut
      apparaître → **Toujours autoriser** (une seule fois).
 3. Pour une diffusion large sans friction : compte Apple Developer (99 $/an)
