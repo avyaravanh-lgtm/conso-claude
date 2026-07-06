@@ -89,7 +89,7 @@ func makeBannerImage(remaining: Int, context: String, phrase: String) -> NSImage
         .font: serif(27, .semibold, italic: false),
         .foregroundColor: accent,
     ])
-    let captionStr = NSAttributedString(string: "restants · \(context)".uppercased(), attributes: [
+    let captionStr = NSAttributedString(string: "remaining · \(context)".uppercased(), attributes: [
         .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
         .kern: 1.6,
         .foregroundColor: ink.withAlphaComponent(0.5),

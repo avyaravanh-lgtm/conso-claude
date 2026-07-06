@@ -42,7 +42,7 @@ func fmtResetShort(_ d: Date?) -> String {
     let s = Int(d.timeIntervalSinceNow)
     if s <= 0 { return "reset" }
     let h = s / 3600, m = (s % 3600) / 60
-    if h >= 24 { return "\(h / 24) j \(h % 24) h" }
+    if h >= 24 { return "\(h / 24) d \(h % 24) h" }
     if h > 0 { return "\(h) h \(String(format: "%02d", m))" }
     return "\(m) min"
 }
@@ -50,9 +50,9 @@ func fmtResetShort(_ d: Date?) -> String {
 func fmtResetFull(_ d: Date?) -> String {
     guard let d = d else { return "" }
     let df = DateFormatter()
-    df.locale = Locale(identifier: "fr_FR")
-    df.dateFormat = "EEEE d MMMM 'à' HH:mm"
-    return "Réinitialisation \(df.string(from: d))"
+    df.locale = Locale(identifier: "en_US")
+    df.dateFormat = "EEEE, MMMM d 'at' HH:mm"
+    return "Resets \(df.string(from: d))"
 }
 
 var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
@@ -119,8 +119,8 @@ body {
 <div id="err" hidden></div>
 <div id="spk" hidden></div>
 <div id="foot">
-  <div class="btn" id="btn-r" title="Rafraîchir"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3"/></svg></div>
-  <div class="btn" id="btn-p" title="Tester l'avion"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M14.5 1.5 1.5 6.8l4.2 1.9m8.8-7.2L9.2 14.5 7.3 10.3m7.2-8.8L5.7 8.7"/></svg></div>
+  <div class="btn" id="btn-r" title="Refresh"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3"/></svg></div>
+  <div class="btn" id="btn-p" title="Test the plane"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M14.5 1.5 1.5 6.8l4.2 1.9m8.8-7.2L9.2 14.5 7.3 10.3m7.2-8.8L5.7 8.7"/></svg></div>
   <span id="time"></span>
 </div>
 <script>
@@ -174,7 +174,7 @@ function render(d, animate) {
     const s = sev(l);
     const row = document.createElement('div');
     row.className = 'row' + (l.session ? ' session' : '');
-    row.title = 'reste ' + (100 - l.percent) + ' % · ' + l.resetFull;
+    row.title = (100 - l.percent) + ' % left · ' + l.resetFull;
     row.innerHTML =
       '<div class="line"><span class="label">' + esc(l.label) + '</span>' +
       '<span class="meta"><span class="reset">' + (l.eta ? '<span class="eta">' + esc(l.eta) + '</span> · ' : '') + esc(l.reset) + '</span>' +
@@ -198,9 +198,9 @@ function render(d, animate) {
   const sp = spark(d.spark);
   $('spk').innerHTML = sp;
   $('spk').hidden = !sp;
-  $('spk').title = 'Consommation de la session dans le temps (6 h max)';
+  $('spk').title = 'Session usage over time (6 h max)';
   $('time').textContent = (d.stale ? '⚠︎ ' : '') + (d.time || '');
-  $('time').title = d.stale ? 'Données en cache — dernière mise à jour ' + d.time : 'Mis à jour à ' + d.time;
+  $('time').title = d.stale ? 'Cached data — last updated ' + d.time : 'Updated at ' + d.time;
 }
 const post = m => window.webkit.messageHandlers.act.postMessage(m);
 $('btn-r').addEventListener('click', () => {
@@ -417,19 +417,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showContextMenu() {
         let menu = NSMenu()
-        let refreshItem = NSMenuItem(title: "Rafraîchir", action: #selector(forceRefresh), keyEquivalent: "r")
+        let refreshItem = NSMenuItem(title: "Refresh", action: #selector(forceRefresh), keyEquivalent: "r")
         refreshItem.target = self
         menu.addItem(refreshItem)
-        let planeItem = NSMenuItem(title: "Tester l'avion ✈️", action: #selector(testPlane), keyEquivalent: "")
+        let planeItem = NSMenuItem(title: "Test the plane ✈️", action: #selector(testPlane), keyEquivalent: "")
         planeItem.target = self
         menu.addItem(planeItem)
         menu.addItem(.separator())
-        let loginItem = NSMenuItem(title: "Lancer au démarrage du Mac", action: #selector(toggleLogin), keyEquivalent: "")
+        let loginItem = NSMenuItem(title: "Start with macOS", action: #selector(toggleLogin), keyEquivalent: "")
         loginItem.target = self
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(loginItem)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quitter Conso Claude", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit Conso Claude", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
@@ -528,7 +528,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let weekday = Calendar.current.component(.weekday, from: now) // 1 = dimanche
         let isNight = hour >= 23 || hour < 6
         let isFridayEvening = weekday == 6 && hour >= 17
-        let isWeekly = context.lowercased().contains("hebdo")
+        let isWeekly = context.lowercased().contains("weekly")
 
         var pool: [String]
         if remaining >= 50 {
@@ -592,8 +592,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func testPlane() {
         // Chaque test tire un palier au hasard — pour voir toute la variété.
         let remaining = [50, 25, 10].randomElement()!
-        PlaneBanner.fly(remaining: remaining, context: "Session 5 h",
-                        phrase: encouragement(remaining: remaining, context: "Session 5 h"))
+        PlaneBanner.fly(remaining: remaining, context: "5-hour session",
+                        phrase: encouragement(remaining: remaining, context: "5-hour session"))
     }
 
     @objc func toggleLogin() {
@@ -616,7 +616,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     let resetPool = ["Fresh tokens. Clean slate.",
                                      "New session, new ideas.",
                                      "The counter is kind again."] + (phrasesFromDisk()["reset"] ?? [])
-                    PlaneBanner.fly(remaining: 100 - l.percent, context: "Session 5 h",
+                    PlaneBanner.fly(remaining: 100 - l.percent, context: "5-hour session",
                                     phrase: resetPool.randomElement()!)
                 }
             }
@@ -677,7 +677,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let reset = session.resetsAt, eta >= reset { return nil }
         let df = DateFormatter()
         df.dateFormat = "HH:mm"
-        return "à sec ~\(df.string(from: eta))"
+        return "empty ~\(df.string(from: eta))"
     }
 
     // MARK: Cache disque (l'app relancée affiche direct les dernières données)
@@ -739,7 +739,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.global(qos: .userInitiated).async {
             defer { DispatchQueue.main.async { self.fetching = false } }
             guard let token = self.getToken() else {
-                self.apply(limits: nil, error: "Token introuvable — ouvre Claude Code puis rafraîchis.")
+                self.apply(limits: nil, error: "Token not found — open Claude Code, then refresh.")
                 return
             }
             var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
@@ -750,11 +750,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.urlSession.dataTask(with: req) { data, resp, err in
                 defer { sem.signal() }
                 if let err = err {
-                    self.apply(limits: nil, error: "Réseau : \(err.localizedDescription)")
+                    self.apply(limits: nil, error: "Network: \(err.localizedDescription)")
                     return
                 }
                 guard let http = resp as? HTTPURLResponse, let data = data else {
-                    self.apply(limits: nil, error: "Pas de réponse de l'API.")
+                    self.apply(limits: nil, error: "No response from the API.")
                     return
                 }
                 if http.statusCode == 429 {
@@ -766,7 +766,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         self.backoffUntil = Date().addingTimeInterval(pause)
                         self.state.stale = !self.state.limits.isEmpty
                         self.state.error = self.state.limits.isEmpty
-                            ? "Limite API atteinte — réessai dans \(Int(pause / 60)) min."
+                            ? "API limit reached — retrying in \(Int(pause / 60)) min."
                             : nil
                         self.updateStatusTitle()
                         if self.popover.isShown {
@@ -777,13 +777,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 if http.statusCode == 401 {
-                    self.apply(limits: nil, error: "Token expiré — ouvre Claude Code puis rafraîchis.")
+                    self.apply(limits: nil, error: "Token expired — open Claude Code, then refresh.")
                     return
                 }
                 guard http.statusCode == 200,
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let rawLimits = json["limits"] as? [[String: Any]] else {
-                    self.apply(limits: nil, error: "API : HTTP \(http.statusCode)")
+                    self.apply(limits: nil, error: "API: HTTP \(http.statusCode)")
                     return
                 }
                 var limits: [UsageLimit] = []
@@ -791,12 +791,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     let kind = l["kind"] as? String ?? "?"
                     var label: String
                     switch kind {
-                    case "session": label = "Session 5 h"
-                    case "weekly_all": label = "Hebdo — tous modèles"
+                    case "session": label = "5-hour session"
+                    case "weekly_all": label = "Weekly — all models"
                     case "weekly_scoped":
                         let scope = l["scope"] as? [String: Any]
                         let model = scope?["model"] as? [String: Any]
-                        label = "Hebdo — \(model?["display_name"] as? String ?? "modèle")"
+                        label = "Weekly — \(model?["display_name"] as? String ?? "model")"
                     default: label = kind
                     }
                     limits.append(UsageLimit(
@@ -846,12 +846,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         guard let session = state.limits.first(where: { $0.isSession }) else { return }
-        let warn = session.percent >= 70 || session.severity == "warning" || session.severity == "critical"
-        let accent: NSColor = session.percent >= 90 || session.severity == "critical"
+        // On affiche le % RESTANT (100 − consommé), cohérent avec l'avion (« il te reste X % »).
+        // Sémantique couleur inversée : corail quand il reste peu (≤ 25 %), 0 % = à sec.
+        let remaining = 100 - session.percent
+        let warn = remaining <= 50 || session.severity == "warning" || session.severity == "critical"
+        let accent: NSColor = remaining <= 25 || session.severity == "critical"
             ? .systemRed
             : (warn ? .systemOrange : .labelColor)
         let title = NSMutableAttributedString(string: "✳︎ ", attributes: [.foregroundColor: NSColor.labelColor])
-        title.append(NSAttributedString(string: "\(session.percent) %", attributes: [
+        title.append(NSAttributedString(string: "\(remaining) %", attributes: [
             .foregroundColor: accent,
             .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: warn ? .bold : .medium),
         ]))

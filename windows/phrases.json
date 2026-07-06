@@ -1,0 +1,48 @@
+{
+  "_note": "Pool additionnel de phrases pour la banderole. Fusionné avec les phrases embarquées. Regénérable par Claude — garder la voix : calme, littéraire, un brin d'humour, jamais culpabilisant.",
+  "50": [
+    "The horizon is still far.",
+    "Curiosity is a renewable resource. Almost.",
+    "Big questions welcome.",
+    "You've barely scratched the thinking.",
+    "Room to wander. Wander well.",
+    "Take the scenic route."
+  ],
+  "25": [
+    "Ask like you mean it.",
+    "The next prompt is the one that matters.",
+    "Fewer questions. Better ones.",
+    "Precision is a kindness to your future self.",
+    "Distill, then ask.",
+    "Three quarters spent. Spend the rest slowly."
+  ],
+  "10": [
+    "Maybe it's time to rest.",
+    "The best stopping points look like this one.",
+    "Rest is part of the work.",
+    "Ten percent of genius left.",
+    "Close the loop, then close the lid.",
+    "Tomorrow's tokens are already waiting.",
+    "A good ending beats a rushed extra mile."
+  ],
+  "night": [
+    "Past midnight, every idea seems brilliant. Verify at dawn.",
+    "Sleep is the best context window.",
+    "The night is for dreaming, not debugging.",
+    "Even Claude thinks you should sleep."
+  ],
+  "friday": [
+    "Friday shipped is better than Monday perfect.",
+    "The weekend is a feature, not a bug."
+  ],
+  "weekly": [
+    "A week of thinking is a lot of thinking.",
+    "Weekly budgets favor the patient.",
+    "Marathon pace, marathon grace."
+  ],
+  "reset": [
+    "The counter forgives. Go again.",
+    "New session. Same ambition.",
+    "Refilled and ready."
+  ]
+}

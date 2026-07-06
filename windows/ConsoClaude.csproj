@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Conso Claude — app Windows (Voie A : codebase séparé, l'app mac Swift ne bouge pas).
+    Tray peint le % RESTANT dans l'icône (Variante A : chiffre plein sur tuile ivoire),
+    popover WebView2 (HTML/CSS repris tel quel du mac), avion-banderole overlay
+    click-through, seuils/phrases identiques.
+
+    Build (sur Windows, SDK .NET 8 requis) :
+        dotnet publish -c Release -r win-x64 --self-contained false
+    ou pour un exe autonome :
+        dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>Conso Claude</AssemblyName>
+    <RootNamespace>ConsoClaude</RootNamespace>
+    <Version>1.0.0</Version>
+    <Product>Conso Claude</Product>
+    <!-- Pas de télémétrie, cohérent avec la doctrine du repo. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Popover HTML/CSS repris tel quel du mac + pool de phrases embarqué. -->
+    <EmbeddedResource Include="popover.html" />
+    <EmbeddedResource Include="phrases.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2592.51" />
+  </ItemGroup>
+
+</Project>

@@ -15,7 +15,7 @@
 
 ---
 
-**`✳ 38 %`** sits in your menu bar — your current 5-hour session usage, always visible. Click it for a compact popover: session and weekly limits as animated bars, a sparkline of your session over time, and a burn-rate prediction («&nbsp;à sec ~14:30&nbsp;») when you're consuming fast enough to run dry before the reset.
+**`✳ 62 %`** sits in your menu bar — how much of your 5-hour session is **left**, always visible (coral when little remains). Click it for a compact popover: session and weekly limits as animated bars, a sparkline of your session over time, and a burn-rate prediction («&nbsp;empty ~14:30&nbsp;») when you're consuming fast enough to run dry before the reset.
 
 When you cross **50%, 75% and 90%** of a limit, a small coral prop plane flies across your screen towing an ivory banner: how much you have left, plus a rotating encouragement — *«&nbsp;Make these tokens count.&nbsp;»*, *«&nbsp;Maybe it's time to rest.&nbsp;»* (the pool is time-aware: late-night and Friday-evening phrases included). Once per session, never twice for the same threshold.
 
@@ -23,7 +23,7 @@ When you cross **50%, 75% and 90%** of a limit, a small coral prop plane flies a
   <img src="assets/banner-preview.png" width="560" alt="The three banner tiers: 50% coral, 25% orange, 10% red">
 </p>
 
-> UI copy is in French. Weekend project, shared as-is.
+> Weekend project, shared as-is. **Windows** port: [`windows/`](windows/README.md).
 
 ## Install
 
@@ -33,7 +33,7 @@ When you cross **50%, 75% and 90%** of a limit, a small coral prop plane flies a
 2. First launch: the app is not notarized, so macOS blocks it — click **"Done"** (not "Move to Trash"), then open **System Settings → Privacy & Security**, scroll down to *"Conso Claude was blocked…"* and click **"Open Anyway"**. One time only.
    *Terminal alternative:* `xattr -d com.apple.quarantine "/Applications/Conso Claude.app"`
 3. If macOS asks whether `security` can access "Claude Code-credentials" → **Always Allow** (once).
-4. Right-click the ✳ icon → "Lancer au démarrage du Mac" to make it permanent.
+4. Right-click the ✳ icon → "Start with macOS" to make it permanent.
 
 ## Build from source
 
@@ -72,7 +72,7 @@ Drop a `phrases.json` in `~/Library/Application Support/Conso Claude/` to extend
 
 - The usage endpoint is not officially documented; if Anthropic changes it, the app shows a friendly error until updated.
 - Not notarized (no Apple Developer account) — hence the "Open Anyway" dance in System Settings.
-- If the menu bar shows `✳ !`: open Claude Code once to refresh the token, then right-click → Rafraîchir.
+- If the menu bar shows `✳ !`: open Claude Code once to refresh the token, then right-click → Refresh.
 
 ---
 

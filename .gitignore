@@ -3,4 +3,8 @@ Conso Claude.app/
 Conso Claude.zip
 .build/
 
+# Artefacts de build .NET (app Windows)
+windows/bin/
+windows/obj/
+
 .DS_Store
