@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/banner-preview.png" width="560" alt="The plane towing usage banners at 50%, 25% and 10% remaining">
+  <img src="assets/plane-flight.gif" width="820" alt="The plane flying across the screen towing a banner: 25% remaining — Distill, then ask.">
 </p>
 
 ---
@@ -18,6 +18,10 @@
 **`✳ 38 %`** sits in your menu bar — your current 5-hour session usage, always visible. Click it for a compact popover: session and weekly limits as animated bars, a sparkline of your session over time, and a burn-rate prediction («&nbsp;à sec ~14:30&nbsp;») when you're consuming fast enough to run dry before the reset.
 
 When you cross **50%, 75% and 90%** of a limit, a small coral prop plane flies across your screen towing an ivory banner: how much you have left, plus a rotating encouragement — *«&nbsp;Make these tokens count.&nbsp;»*, *«&nbsp;Maybe it's time to rest.&nbsp;»* (the pool is time-aware: late-night and Friday-evening phrases included). Once per session, never twice for the same threshold.
+
+<p align="center">
+  <img src="assets/banner-preview.png" width="560" alt="The three banner tiers: 50% coral, 25% orange, 10% red">
+</p>
 
 > UI copy is in French. Weekend project, shared as-is.
 
