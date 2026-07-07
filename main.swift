@@ -853,10 +853,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let accent: NSColor = remaining <= 25 || session.severity == "critical"
             ? .systemRed
             : (warn ? .systemOrange : .labelColor)
-        let title = NSMutableAttributedString(string: "✳︎ ", attributes: [.foregroundColor: NSColor.labelColor])
+        // Même taille que les autres extras du menu bar (batterie, etc.) : ~11pt, poids regular.
+        // Mesuré : la batterie rend plus petit que systemFontSize (13pt) → smallSystemFontSize.
+        // On ne passe en gras que pour attirer l'œil quand il reste peu.
+        let barSize = NSFont.smallSystemFontSize
+        let title = NSMutableAttributedString(string: "✳︎ ", attributes: [
+            .foregroundColor: NSColor.labelColor,
+            .font: NSFont.systemFont(ofSize: barSize),
+        ])
         title.append(NSAttributedString(string: "\(remaining) %", attributes: [
             .foregroundColor: accent,
-            .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: warn ? .bold : .medium),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: barSize, weight: warn ? .bold : .regular),
         ]))
         statusItem.button?.attributedTitle = title
     }
