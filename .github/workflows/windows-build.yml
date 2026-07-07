@@ -1,0 +1,38 @@
+name: Windows build
+
+# Construit l'app Windows sur un runner Windows (impossible sur macOS : reference
+# packs net8.0-windows/WinForms non dispos hors Windows). L'artefact téléchargeable
+# permet de tester sans installer le SDK .NET.
+
+on:
+  push:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows-build.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Publish (self-contained win-x64)
+        run: dotnet publish -c Release -r win-x64 --self-contained true -o publish
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ConsoClaude-win-x64
+          path: windows/publish/
+          if-no-files-found: error

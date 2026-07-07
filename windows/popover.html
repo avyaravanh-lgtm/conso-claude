@@ -1,0 +1,151 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root { color-scheme: light dark; }
+* { margin:0; padding:0; box-sizing:border-box; -webkit-user-select:none; user-select:none; cursor:default; }
+html,body { background:transparent; overflow:hidden; }
+body {
+  font: 12px/1.4 "Segoe UI", -apple-system, sans-serif;
+  color: light-dark(rgba(20,18,15,.88), rgba(245,240,232,.92));
+  padding: 12px 14px 8px;
+}
+.row { margin-bottom: 12px; }
+.line { display:flex; align-items:baseline; margin-bottom:5px; }
+.label { font-size:11px; font-weight:500; color: light-dark(rgba(20,18,15,.55), rgba(245,240,232,.55));
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.session .label { font-weight:600; color: light-dark(rgba(20,18,15,.85), rgba(245,240,232,.9)); }
+.meta { margin-left:auto; display:flex; gap:7px; align-items:baseline; }
+.reset { font-size:9.5px; font-variant-numeric:tabular-nums;
+  color: light-dark(rgba(20,18,15,.32), rgba(245,240,232,.35)); }
+.pct { font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; min-width:38px; text-align:right; }
+.session .pct { font-size:13px; }
+.ok   { color:#d97757; } .warn { color:#e8940c; } .crit { color:#e5493a; }
+.bar {
+  position:relative; height:4px; border-radius:2.5px; overflow:hidden;
+  background: light-dark(rgba(20,18,15,.1), rgba(245,240,232,.12));
+  background-image: linear-gradient(90deg, light-dark(rgba(20,18,15,.14), rgba(245,240,232,.16)) 1px, transparent 1px);
+  background-size: 25% 100%;
+}
+.session .bar { height:5px; }
+.fill {
+  position:absolute; top:0; bottom:0; left:0; width:0; border-radius:3px;
+  transition: width .9s cubic-bezier(.16,1,.3,1);
+}
+.fill.ok   { background:linear-gradient(90deg,#f2a984,#d97757); box-shadow:0 0 6px rgba(217,119,87,.55); }
+.fill.warn { background:linear-gradient(90deg,#fac05a,#e8940c); box-shadow:0 0 6px rgba(232,148,12,.55); }
+.fill.crit { background:linear-gradient(90deg,#fa7362,#e5493a); box-shadow:0 0 6px rgba(229,73,58,.6); }
+.fill.anim::after {
+  content:""; position:absolute; top:0; bottom:0; left:-40px; width:36px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.6),transparent);
+  animation: shine .8s .45s both;
+}
+@keyframes shine { to { left:110%; } }
+#err { font-size:10px; color:#e8940c; margin:-4px 0 8px; }
+#spk { margin:-2px 0 8px; color: light-dark(rgba(20,18,15,.8), rgba(245,240,232,.8)); }
+.eta { color:#e8940c; }
+#foot { display:flex; align-items:center; gap:4px; margin-top:1px; }
+.btn { width:20px; height:18px; display:flex; align-items:center; justify-content:center;
+  border-radius:5px; color: light-dark(rgba(20,18,15,.35), rgba(245,240,232,.38)); }
+.btn:hover { color: light-dark(rgba(20,18,15,.75), rgba(245,240,232,.8));
+  background: light-dark(rgba(20,18,15,.06), rgba(245,240,232,.08)); }
+.btn svg { width:12px; height:12px; }
+.btn:active svg { transform: scale(.85); }
+#btn-r.spin svg { animation: rot .5s ease; }
+@keyframes rot { to { transform: rotate(360deg); } }
+#time { margin-left:auto; font-size:9px; font-variant-numeric:tabular-nums;
+  color: light-dark(rgba(20,18,15,.25), rgba(245,240,232,.28)); }
+</style></head><body>
+<div id="rows"></div>
+<div id="err" hidden></div>
+<div id="spk" hidden></div>
+<div id="foot">
+  <div class="btn" id="btn-r" title="Refresh"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3"/></svg></div>
+  <div class="btn" id="btn-p" title="Test the plane"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M14.5 1.5 1.5 6.8l4.2 1.9m8.8-7.2L9.2 14.5 7.3 10.3m7.2-8.8L5.7 8.7"/></svg></div>
+  <span id="time"></span>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function sev(l) {
+  if (l.severity === 'critical' || l.percent >= 90) return 'crit';
+  if (l.severity === 'warning'  || l.percent >= 70) return 'warn';
+  return 'ok';
+}
+function countUp(el, v, delay, animate) {
+  if (!animate) { el.textContent = v + ' %'; return; }
+  el.textContent = '0 %';
+  const t0 = performance.now() + delay * 1000;
+  function tick(t) {
+    const p = Math.min(Math.max((t - t0) / 700, 0), 1);
+    el.textContent = Math.round(v * (1 - Math.pow(1 - p, 3))) + ' %';
+    if (p < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+function spark(points) {
+  if (!points || points.length < 3) return '';
+  const span = Math.max(...points.map(p => p.a));
+  if (span < 1800) return '';  // < 30 min d'historique
+  // Fenêtre adaptative : la courbe remplit toute la largeur, 6 h max.
+  const W = 220, H = 28, win = Math.min(Math.max(span, 1800), 6 * 3600);
+  const xs = p => W - (Math.min(p.a, win) / win) * W;
+  const ys = p => H - 3 - (p.v / 100) * (H - 9);
+  const sorted = points.slice().sort((a, b) => b.a - a.a);
+  let d = '';
+  sorted.forEach((p, i) => { d += (i ? 'L' : 'M') + xs(p).toFixed(1) + ',' + ys(p).toFixed(1); });
+  const last = sorted[sorted.length - 1];
+  const area = d + 'L' + xs(last).toFixed(1) + ',' + (H - 3) + 'L' + xs(sorted[0]).toFixed(1) + ',' + (H - 3) + 'Z';
+  const label = win >= 5400 ? Math.round(win / 3600) + ' H' : Math.round(win / 60) + ' MIN';
+  const mid = H - 3 - (H - 9) / 2;
+  return '<svg width="' + W + '" height="' + H + '" style="display:block">' +
+    '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0" stop-color="#d97757" stop-opacity=".28"/>' +
+    '<stop offset="1" stop-color="#d97757" stop-opacity="0"/></linearGradient></defs>' +
+    '<line x1="0" y1="' + (H - 3) + '" x2="' + W + '" y2="' + (H - 3) + '" stroke="currentColor" opacity=".15"/>' +
+    '<line x1="0" y1="' + mid + '" x2="' + W + '" y2="' + mid + '" stroke="currentColor" opacity=".07" stroke-dasharray="2 3"/>' +
+    '<text x="1" y="7" font-size="6.5" fill="currentColor" opacity=".4" letter-spacing="1.2">SESSION · ' + label + '</text>' +
+    '<path d="' + area + '" fill="url(#g)"/>' +
+    '<path d="' + d + '" fill="none" stroke="#d97757" stroke-width="1.5" stroke-linejoin="round" opacity=".9"/></svg>';
+}
+function render(d, animate) {
+  const rows = $('rows');
+  rows.innerHTML = '';
+  d.limits.forEach((l, i) => {
+    const s = sev(l);
+    const row = document.createElement('div');
+    row.className = 'row' + (l.session ? ' session' : '');
+    row.title = (100 - l.percent) + ' % left · ' + l.resetFull;
+    row.innerHTML =
+      '<div class="line"><span class="label">' + esc(l.label) + '</span>' +
+      '<span class="meta"><span class="reset">' + (l.eta ? '<span class="eta">' + esc(l.eta) + '</span> · ' : '') + esc(l.reset) + '</span>' +
+      '<span class="pct ' + s + '"></span></span></div>' +
+      '<div class="bar"><div class="fill ' + s + (animate ? ' anim' : '') + '"></div></div>';
+    rows.appendChild(row);
+    const fill = row.querySelector('.fill');
+    const pct = row.querySelector('.pct');
+    const w = Math.max(0, Math.min(l.percent, 100)) + '%';
+    if (animate) {
+      fill.style.transitionDelay = (i * 0.07) + 's';
+      requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = w; }));
+    } else {
+      fill.style.transition = 'none';
+      fill.style.width = w;
+    }
+    countUp(pct, l.percent, i * 0.07, animate);
+  });
+  $('err').hidden = !d.error;
+  $('err').textContent = d.error || '';
+  const sp = spark(d.spark);
+  $('spk').innerHTML = sp;
+  $('spk').hidden = !sp;
+  $('spk').title = 'Session usage over time (6 h max)';
+  $('time').textContent = (d.stale ? '⚠︎ ' : '') + (d.time || '');
+  $('time').title = d.stale ? 'Cached data — last updated ' + d.time : 'Updated at ' + d.time;
+}
+// WebView2 : le pont JS→C# passe par window.chrome.webview (vs window.webkit sur mac).
+const post = m => window.chrome.webview.postMessage(m);
+$('btn-r').addEventListener('click', () => {
+  $('btn-r').classList.remove('spin'); void $('btn-r').offsetWidth; $('btn-r').classList.add('spin');
+  post('refresh');
+});
+$('btn-p').addEventListener('click', () => post('plane'));
+</script>
+</body></html>

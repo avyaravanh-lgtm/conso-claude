@@ -1,17 +1,21 @@
 # Conso Claude
 
-Consommation Claude (plan Max) dans la **barre de menus macOS** : `✳ 30 %` en
-permanence, popover discret au clic (barres animées, sparkline 6 h, prédiction
-« à sec ~HH:MM »), et un petit avion corail qui traverse l'écran avec une phrase
-d'encouragement quand il te reste 50 / 25 / 10 %.
+Consommation Claude (plan Max) dans la **barre de menus macOS** : `✳ 70 %` en
+permanence — le pourcentage **restant** de la session — popover discret au clic
+(barres animées, sparkline 6 h, prédiction « empty ~HH:MM »), et un petit avion
+corail qui traverse l'écran avec une phrase d'encouragement quand il te reste
+50 / 25 / 10 %.
+
+> L'interface de l'app est en **anglais**. Port **Windows** : [`windows/`](windows/README.md).
 
 ## Utilisation
 
 - **L'app vit dans `/Applications/Conso Claude.app`** (aucune demande d'accès macOS).
-- Clic gauche sur ✳ → le popover. Clic droit → options (rafraîchir, tester
-  l'avion, lancer au démarrage, quitter).
-- Le % passe orange ≥ 70 %, rouge ≥ 90 %. L'avion passe aux seuils 50/75/90 %
-  de conso, une fois par session/semaine, sur l'écran où est la souris.
+- Clic gauche sur ✳ → le popover. Clic droit → options (Refresh, Test the plane,
+  Start with macOS, Quit).
+- Sémantique inversée (on affiche le restant) : le % passe **orange ≤ 50 %**,
+  **corail ≤ 25 %** — corail = il reste peu, tuile à sec à 0 %. L'avion passe aux
+  seuils 50/75/90 % de conso, une fois par session/semaine, sur l'écran où est la souris.
 
 ## Développement
 
@@ -75,4 +79,4 @@ Binaire universel : tourne sur Apple Silicon et Intel. macOS 15 minimum.
 ## Si `✳ !` ou « Token expiré »
 
 Ouvrir Claude Code (terminal ou app) pour rafraîchir le token, puis clic droit
-→ Rafraîchir.
+→ Refresh.
