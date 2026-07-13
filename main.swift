@@ -289,7 +289,8 @@ final class WebPopover: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     func contentView() -> NSView {
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView()
-            glass.style = .clear          // variante plus transparente (façon Finder)
+            glass.style = .regular        // matériau adaptatif : garantit la lisibilité
+                                          // quel que soit le fond (.clear était illisible sur blanc)
             glass.cornerRadius = 16
             // Masque arrondi sur la web view : coupe son bord rectangulaire (le
             // « cadre fantôme » qu'on devinait aux coins).
