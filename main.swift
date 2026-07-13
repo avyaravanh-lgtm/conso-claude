@@ -289,7 +289,13 @@ final class WebPopover: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     func contentView() -> NSView {
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView()
+            glass.style = .clear          // variante plus transparente (façon Finder)
             glass.cornerRadius = 16
+            // Masque arrondi sur la web view : coupe son bord rectangulaire (le
+            // « cadre fantôme » qu'on devinait aux coins).
+            webView.wantsLayer = true
+            webView.layer?.cornerRadius = 16
+            webView.layer?.masksToBounds = true
             webView.autoresizingMask = [.width, .height]
             webView.frame = glass.bounds
             glass.contentView = webView
