@@ -101,15 +101,18 @@ body {
 }
 @keyframes shine { to { left:110%; } }
 #err { font-size:10px; color:#e8940c; margin:-4px 0 8px; }
-#spk { margin:-2px 0 8px; color: light-dark(rgba(20,18,15,.8), rgba(245,240,232,.8)); }
+#spk { margin:2px 0 4px; padding-top:10px; color: light-dark(rgba(20,18,15,.8), rgba(245,240,232,.8));
+  border-top:.5px solid light-dark(rgba(20,18,15,.08), rgba(245,240,232,.09)); }
 .eta { color:#e8940c; }
-#foot { display:flex; align-items:center; gap:4px; margin-top:1px; }
+#foot { display:flex; align-items:center; gap:4px; margin-top:4px; padding-top:8px;
+  border-top:.5px solid light-dark(rgba(20,18,15,.08), rgba(245,240,232,.09)); }
 .btn { width:20px; height:18px; display:flex; align-items:center; justify-content:center;
-  border-radius:5px; color: light-dark(rgba(20,18,15,.35), rgba(245,240,232,.38)); }
+  border-radius:5px; color: light-dark(rgba(20,18,15,.35), rgba(245,240,232,.38));
+  transition: background .15s ease, color .15s ease; }
 .btn:hover { color: light-dark(rgba(20,18,15,.75), rgba(245,240,232,.8));
   background: light-dark(rgba(20,18,15,.06), rgba(245,240,232,.08)); }
-.btn svg { width:12px; height:12px; }
-.btn:active svg { transform: scale(.85); }
+.btn svg { width:12px; height:12px; transition: transform .12s ease; }
+.btn:active svg { transform: scale(.82); }
 #btn-r.spin svg { animation: rot .5s ease; }
 @keyframes rot { to { transform: rotate(360deg); } }
 #time { margin-left:auto; font-size:9px; font-variant-numeric:tabular-nums;
@@ -163,6 +166,10 @@ function spark(points) {
     buckets[idx] += used;
   }
   const peak = Math.max(...buckets);
+  // Plancher d'échelle : un jour calme reste visuellement calme. Les barres ne
+  // gonflent pour remplir le graphe qu'au-delà de 20 %/h — le rythme qui
+  // viderait une session entière (100 %) en 5 h, soit du plein régime.
+  const scale = Math.max(peak, 20);
   const baseY = H - 12, topY = 9, maxBarH = baseY - topY;  // 12px sous la ligne pour les heures
   const slot = W / hours, bw = Math.min(slot * 0.6, 26);
   const now = new Date();
@@ -170,7 +177,7 @@ function spark(points) {
   let bars = '', ticks = '';
   for (let j = 0; j < hours; j++) {
     const v = buckets[j];
-    const h = v > 0 ? Math.max(1.5, (v / peak) * maxBarH) : 1.5;
+    const h = v > 0 ? Math.max(1.5, (v / scale) * maxBarH) : 1.5;
     const cx = W - (j + 0.5) * slot;  // centre de la barre ; heure 0 (récente) à droite
     bars += '<rect x="' + (cx - bw / 2).toFixed(1) + '" y="' + (baseY - h).toFixed(1) +
       '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="1" fill="#d97757" opacity="' +
