@@ -146,13 +146,14 @@ function spark(points) {
   if (!points || points.length < 3) return '';
   const span = Math.max(...points.map(p => p.a));
   if (span < 1800) return '';  // < 30 min d'historique
-  const W = 220, H = 28;
+  const W = 220, H = 42;
   // Points en ordre chronologique (ancien -> récent).
   const pts = points.slice().sort((a, b) => b.a - a.a);
   // % consommés dans chacune des dernières heures : la dérivée du cumul.
   // Le % de session ne fait que monter puis retombe à 0 au reset ; une baisse
   // = nouvelle session, on ne compte alors que la remontée depuis zéro.
-  const hours = Math.min(Math.ceil(span / 3600), 6);
+  // Fenêtre adaptative : grandit avec l'historique dispo, jusqu'à 24 h.
+  const hours = Math.min(Math.ceil(span / 3600), 24);
   const buckets = new Array(hours).fill(0);
   for (let i = 1; i < pts.length; i++) {
     const prev = pts[i - 1], cur = pts[i];
@@ -162,22 +163,30 @@ function spark(points) {
     buckets[idx] += used;
   }
   const peak = Math.max(...buckets);
-  const baseY = H - 3, topY = 9, maxBarH = baseY - topY;
-  const slot = W / hours, bw = Math.min(slot * 0.6, 26), gap = slot - bw;
-  let bars = '';
+  const baseY = H - 12, topY = 9, maxBarH = baseY - topY;  // 12px sous la ligne pour les heures
+  const slot = W / hours, bw = Math.min(slot * 0.6, 26);
+  const now = new Date();
+  const step = Math.max(1, Math.round(hours / 4));  // ~4 repères d'heure
+  let bars = '', ticks = '';
   for (let j = 0; j < hours; j++) {
     const v = buckets[j];
     const h = v > 0 ? Math.max(1.5, (v / peak) * maxBarH) : 1.5;
-    const x = W - (j + 1) * slot + gap / 2;  // heure 0 (récente) à droite
-    bars += '<rect x="' + x.toFixed(1) + '" y="' + (baseY - h).toFixed(1) +
+    const cx = W - (j + 0.5) * slot;  // centre de la barre ; heure 0 (récente) à droite
+    bars += '<rect x="' + (cx - bw / 2).toFixed(1) + '" y="' + (baseY - h).toFixed(1) +
       '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="1" fill="#d97757" opacity="' +
       (v > 0 ? '.9' : '.15') + '"/>';
+    if (j % step === 0) {
+      const t = new Date(now.getTime() - (j + 0.5) * 3600 * 1000);
+      const tx = Math.min(Math.max(cx, 8), W - 8);
+      ticks += '<text x="' + tx.toFixed(1) + '" y="' + (H - 2) + '" font-size="6" text-anchor="middle" ' +
+        'fill="currentColor" opacity=".35">' + String(t.getHours()).padStart(2, '0') + 'h</text>';
+    }
   }
   const cap = peak > 0 ? ' · PEAK ' + Math.round(peak) + '%/H' : '';
   return '<svg width="' + W + '" height="' + H + '" style="display:block">' +
     '<line x1="0" y1="' + baseY + '" x2="' + W + '" y2="' + baseY + '" stroke="currentColor" opacity=".15"/>' +
     '<text x="1" y="7" font-size="6.5" fill="currentColor" opacity=".4" letter-spacing="1.2">USED / HOUR' + cap + '</text>' +
-    bars + '</svg>';
+    bars + ticks + '</svg>';
 }
 function render(d, animate) {
   const rows = $('rows');
@@ -210,8 +219,10 @@ function render(d, animate) {
   const sp = spark(d.spark);
   $('spk').innerHTML = sp;
   $('spk').hidden = !sp;
-  $('spk').title = 'Usage per hour (last 6 h)';
-  $('time').textContent = (d.stale ? '⚠︎ ' : '') + (d.time || '');
+  $('spk').title = 'Usage per hour (last 24 h)';
+  // Plus d'horloge : on ne garde que l'alerte ⚠︎ si les données sont en cache
+  // (l'heure de dernière maj reste dispo au survol).
+  $('time').textContent = d.stale ? '⚠︎' : '';
   $('time').title = d.stale ? 'Cached data — last updated ' + d.time : 'Updated at ' + d.time;
 }
 const post = m => window.webkit.messageHandlers.act.postMessage(m);
@@ -663,7 +674,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func sparkPayload() -> [[String: Any]] {
         let now = Date().timeIntervalSince1970
-        return history.filter { now - $0.t <= 6 * 3600 }.map { ["a": now - $0.t, "v": $0.v] }
+        return history.filter { now - $0.t <= 24 * 3600 }.map { ["a": now - $0.t, "v": $0.v] }
     }
 
     // Au rythme observé, quand la session sera-t-elle à sec ?
