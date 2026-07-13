@@ -283,6 +283,34 @@ final class WebPopover: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     func run(_ js: String) {
         if ready { webView.evaluateJavaScript(js) } else { pendingJS = js }
     }
+
+    /// Vue de contenu du popover. Sur macOS 26+ on enveloppe la web view dans un
+    /// NSGlassEffectView (Liquid Glass natif) ; repli sur la web view nue avant.
+    func contentView() -> NSView {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.style = .regular        // matériau adaptatif : garantit la lisibilité
+                                          // quel que soit le fond (.clear était illisible sur blanc)
+            // Voile adaptatif : rend le verre un peu moins transparent et stabilise
+            // le contraste du texte. Curseur = la composante alpha ci-dessous.
+            glass.tintColor = NSColor(name: nil) { app in
+                let dark = app.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                return dark ? NSColor(white: 0.10, alpha: 0.32)
+                            : NSColor(white: 1.00, alpha: 0.32)
+            }
+            glass.cornerRadius = 16
+            // Masque arrondi sur la web view : coupe son bord rectangulaire (le
+            // « cadre fantôme » qu'on devinait aux coins).
+            webView.wantsLayer = true
+            webView.layer?.cornerRadius = 16
+            webView.layer?.masksToBounds = true
+            webView.autoresizingMask = [.width, .height]
+            webView.frame = glass.bounds
+            glass.contentView = webView
+            return glass
+        }
+        return webView
+    }
 }
 
 // MARK: - Avion-banderole ✈️
@@ -397,10 +425,19 @@ enum PlaneBanner {
 
 // MARK: - App
 
+/// Panneau flottant sans bord (façon Centre de contrôle) : pas de triangle
+/// d'ancrage, fond transparent → le Liquid Glass réfracte le vrai bureau.
+/// Borderless mais autorisé à devenir key pour que la web view soit interactive.
+final class GlassPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
-    let popover = NSPopover()
-    let contentVC = NSViewController()
+    let panel = GlassPanel(contentRect: NSRect(x: 0, y: 0, width: 248, height: 200),
+                           styleMask: [.borderless, .nonactivatingPanel],
+                           backing: .buffered, defer: false)
+    var clickMonitor: Any?
     let web = WebPopover()
     var state = UsageState()
 
@@ -423,10 +460,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.action = #selector(statusClicked)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
-        contentVC.view = web.webView
-        popover.contentViewController = contentVC
-        popover.behavior = .transient
-        popover.animates = true
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        // L'ombre de fenêtre serait rectangulaire (forme du cadre, pas du verre) :
+        // on la coupe et on laisse le NSGlassEffectView porter sa propre ombre arrondie.
+        panel.hasShadow = false
+        panel.level = .popUpMenu
+        panel.hidesOnDeactivate = false
+        panel.animationBehavior = .utilityWindow
+        panel.contentView = web.contentView()
 
         web.onAction = { [weak self] action in
             switch action {
@@ -478,18 +520,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func togglePopover() {
-        if popover.isShown {
-            popover.performClose(nil)
+        if panel.isVisible {
+            closePanel()
             return
         }
-        guard let button = statusItem.button else { return }
         pushToWeb(animate: true)
-        popover.contentSize = popoverSize()
-        NSApp.activate(ignoringOtherApps: true)
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        repositionPanel()
+        panel.makeKeyAndOrderFront(nil)
+        installClickMonitor()
         // Refetch seulement si les données datent (> 5 min) — sinon on garde le cache.
         if state.fetchedAt.map({ Date().timeIntervalSince($0) > 300 }) ?? true {
             refresh()
+        }
+    }
+
+    /// Place le panneau juste sous l'icône de la barre de menu (bord haut ancré),
+    /// recadré pour rester dans l'écran visible.
+    func repositionPanel() {
+        guard let button = statusItem.button, let bwin = button.window else { return }
+        let size = popoverSize()
+        let onScreen = bwin.convertToScreen(button.convert(button.bounds, to: nil))
+        var x = onScreen.midX - size.width / 2
+        let y = onScreen.minY - size.height - 6
+        if let vf = (bwin.screen ?? NSScreen.main)?.visibleFrame {
+            x = min(max(x, vf.minX + 6), vf.maxX - size.width - 6)
+        }
+        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+    }
+
+    func closePanel() {
+        panel.orderOut(nil)
+        if let m = clickMonitor { NSEvent.removeMonitor(m); clickMonitor = nil }
+    }
+
+    /// Ferme le panneau sur un clic hors de lui. On exclut l'icône de la barre
+    /// de menu : c'est l'action du bouton (toggle) qui gère ce cas.
+    func installClickMonitor() {
+        guard clickMonitor == nil else { return }
+        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            guard let self else { return }
+            if let button = self.statusItem.button, let bwin = button.window {
+                let r = bwin.convertToScreen(button.convert(button.bounds, to: nil))
+                if r.contains(NSEvent.mouseLocation) { return }
+            }
+            self.closePanel()
         }
     }
 
@@ -810,9 +884,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                             ? "API limit reached — retrying in \(Int(pause / 60)) min."
                             : nil
                         self.updateStatusTitle()
-                        if self.popover.isShown {
+                        if self.panel.isVisible {
                             self.pushToWeb(animate: false)
-                            self.popover.contentSize = self.popoverSize()
+                            self.repositionPanel()
                         }
                     }
                     return
@@ -871,9 +945,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.state.stale = !self.state.limits.isEmpty
             }
             self.updateStatusTitle()
-            if self.popover.isShown {
+            if self.panel.isVisible {
                 self.pushToWeb(animate: false)
-                self.popover.contentSize = self.popoverSize()
+                self.repositionPanel()
             }
         }
     }
