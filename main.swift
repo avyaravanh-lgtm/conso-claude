@@ -186,7 +186,7 @@ function spark(points) {
       const t = new Date(now.getTime() - (j + 0.5) * 3600 * 1000);
       const tx = Math.min(Math.max(cx, 8), W - 8);
       ticks += '<text x="' + tx.toFixed(1) + '" y="' + (H - 2) + '" font-size="6" text-anchor="middle" ' +
-        'fill="currentColor" opacity=".35">' + String(t.getHours()).padStart(2, '0') + 'h</text>';
+        'fill="currentColor" opacity=".4">' + String(t.getHours()).padStart(2, '0') + 'h</text>';
     }
   }
   const cap = peak > 0 ? ' · PEAK ' + Math.round(peak) + '%/H' : '';
