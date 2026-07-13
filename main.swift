@@ -291,6 +291,13 @@ final class WebPopover: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
             let glass = NSGlassEffectView()
             glass.style = .regular        // matériau adaptatif : garantit la lisibilité
                                           // quel que soit le fond (.clear était illisible sur blanc)
+            // Voile adaptatif : rend le verre un peu moins transparent et stabilise
+            // le contraste du texte. Curseur = la composante alpha ci-dessous.
+            glass.tintColor = NSColor(name: nil) { app in
+                let dark = app.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                return dark ? NSColor(white: 0.10, alpha: 0.40)
+                            : NSColor(white: 1.00, alpha: 0.40)
+            }
             glass.cornerRadius = 16
             // Masque arrondi sur la web view : coupe son bord rectangulaire (le
             // « cadre fantôme » qu'on devinait aux coins).
