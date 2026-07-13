@@ -283,6 +283,20 @@ final class WebPopover: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     func run(_ js: String) {
         if ready { webView.evaluateJavaScript(js) } else { pendingJS = js }
     }
+
+    /// Vue de contenu du popover. Sur macOS 26+ on enveloppe la web view dans un
+    /// NSGlassEffectView (Liquid Glass natif) ; repli sur la web view nue avant.
+    func contentView() -> NSView {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.cornerRadius = 16
+            webView.autoresizingMask = [.width, .height]
+            webView.frame = glass.bounds
+            glass.contentView = webView
+            return glass
+        }
+        return webView
+    }
 }
 
 // MARK: - Avion-banderole ✈️
@@ -423,7 +437,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.action = #selector(statusClicked)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
-        contentVC.view = web.webView
+        contentVC.view = web.contentView()
         popover.contentViewController = contentVC
         popover.behavior = .transient
         popover.animates = true
