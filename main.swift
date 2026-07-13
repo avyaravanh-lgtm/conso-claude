@@ -71,7 +71,7 @@ body {
 }
 .row { margin-bottom: 12px; }
 .line { display:flex; align-items:baseline; margin-bottom:5px; }
-.label { font-size:11px; font-weight:500; color: light-dark(rgba(20,18,15,.55), rgba(245,240,232,.55));
+.label { font-size:11px; font-weight:500; color: light-dark(rgba(20,18,15,.6), rgba(245,240,232,.6));
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .session .label { font-weight:600; color: light-dark(rgba(20,18,15,.85), rgba(245,240,232,.9)); }
 .meta { margin-left:auto; display:flex; gap:7px; align-items:baseline; }
@@ -117,6 +117,17 @@ body {
 @keyframes rot { to { transform: rotate(360deg); } }
 #time { margin-left:auto; font-size:9px; font-variant-numeric:tabular-nums;
   color: light-dark(rgba(20,18,15,.25), rgba(245,240,232,.28)); }
+/* Accessibilité : respecte « Augmenter le contraste » (Réglages > Accessibilité
+   > Affichage). On densifie tous les gris uniquement si l'utilisateur l'a activé —
+   le look discret reste par défaut. Booster #spk relève aussi le texte SVG du
+   graphe (fill=currentColor). */
+@media (prefers-contrast: more) {
+  body { color: light-dark(rgba(20,18,15,.98), rgba(245,240,232,1)); }
+  .label { color: light-dark(rgba(20,18,15,.82), rgba(245,240,232,.82)); }
+  .session .label { color: light-dark(rgba(20,18,15,1), rgba(245,240,232,1)); }
+  .reset, #time { color: light-dark(rgba(20,18,15,.6), rgba(245,240,232,.62)); }
+  #spk { color: light-dark(rgba(20,18,15,1), rgba(245,240,232,1)); }
+}
 </style></head><body>
 <div id="rows"></div>
 <div id="err" hidden></div>
@@ -185,14 +196,14 @@ function spark(points) {
     if (j % step === 0) {
       const t = new Date(now.getTime() - (j + 0.5) * 3600 * 1000);
       const tx = Math.min(Math.max(cx, 8), W - 8);
-      ticks += '<text x="' + tx.toFixed(1) + '" y="' + (H - 2) + '" font-size="6" text-anchor="middle" ' +
-        'fill="currentColor" opacity=".4">' + String(t.getHours()).padStart(2, '0') + 'h</text>';
+      ticks += '<text x="' + tx.toFixed(1) + '" y="' + (H - 2) + '" font-size="6.5" text-anchor="middle" ' +
+        'fill="currentColor" opacity=".62">' + String(t.getHours()).padStart(2, '0') + 'h</text>';
     }
   }
   const cap = peak > 0 ? ' · PEAK ' + Math.round(peak) + '%/H' : '';
   return '<svg width="' + W + '" height="' + H + '" style="display:block">' +
     '<line x1="0" y1="' + baseY + '" x2="' + W + '" y2="' + baseY + '" stroke="currentColor" opacity=".15"/>' +
-    '<text x="1" y="7" font-size="6.5" fill="currentColor" opacity=".4" letter-spacing="1.2">USED / HOUR' + cap + '</text>' +
+    '<text x="1" y="7" font-size="7" fill="currentColor" opacity=".62" letter-spacing="1.2">USED / HOUR' + cap + '</text>' +
     bars + ticks + '</svg>';
 }
 function render(d, animate) {
