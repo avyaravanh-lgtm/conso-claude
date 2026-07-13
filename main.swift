@@ -448,7 +448,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        // L'ombre de fenêtre serait rectangulaire (forme du cadre, pas du verre) :
+        // on la coupe et on laisse le NSGlassEffectView porter sa propre ombre arrondie.
+        panel.hasShadow = false
         panel.level = .popUpMenu
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .utilityWindow
