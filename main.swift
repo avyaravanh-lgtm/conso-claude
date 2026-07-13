@@ -146,26 +146,38 @@ function spark(points) {
   if (!points || points.length < 3) return '';
   const span = Math.max(...points.map(p => p.a));
   if (span < 1800) return '';  // < 30 min d'historique
-  // Fenêtre adaptative : la courbe remplit toute la largeur, 6 h max.
-  const W = 220, H = 28, win = Math.min(Math.max(span, 1800), 6 * 3600);
-  const xs = p => W - (Math.min(p.a, win) / win) * W;
-  const ys = p => H - 3 - (p.v / 100) * (H - 9);
-  const sorted = points.slice().sort((a, b) => b.a - a.a);
-  let d = '';
-  sorted.forEach((p, i) => { d += (i ? 'L' : 'M') + xs(p).toFixed(1) + ',' + ys(p).toFixed(1); });
-  const last = sorted[sorted.length - 1];
-  const area = d + 'L' + xs(last).toFixed(1) + ',' + (H - 3) + 'L' + xs(sorted[0]).toFixed(1) + ',' + (H - 3) + 'Z';
-  const label = win >= 5400 ? Math.round(win / 3600) + ' H' : Math.round(win / 60) + ' MIN';
-  const mid = H - 3 - (H - 9) / 2;
+  const W = 220, H = 28;
+  // Points en ordre chronologique (ancien -> récent).
+  const pts = points.slice().sort((a, b) => b.a - a.a);
+  // % consommés dans chacune des dernières heures : la dérivée du cumul.
+  // Le % de session ne fait que monter puis retombe à 0 au reset ; une baisse
+  // = nouvelle session, on ne compte alors que la remontée depuis zéro.
+  const hours = Math.min(Math.ceil(span / 3600), 6);
+  const buckets = new Array(hours).fill(0);
+  for (let i = 1; i < pts.length; i++) {
+    const prev = pts[i - 1], cur = pts[i];
+    const used = cur.v >= prev.v ? cur.v - prev.v : cur.v;
+    if (used <= 0) continue;
+    const idx = Math.min(Math.floor(cur.a / 3600), hours - 1);  // 0 = heure en cours
+    buckets[idx] += used;
+  }
+  const peak = Math.max(...buckets);
+  const baseY = H - 3, topY = 9, maxBarH = baseY - topY;
+  const slot = W / hours, bw = Math.min(slot * 0.6, 26), gap = slot - bw;
+  let bars = '';
+  for (let j = 0; j < hours; j++) {
+    const v = buckets[j];
+    const h = v > 0 ? Math.max(1.5, (v / peak) * maxBarH) : 1.5;
+    const x = W - (j + 1) * slot + gap / 2;  // heure 0 (récente) à droite
+    bars += '<rect x="' + x.toFixed(1) + '" y="' + (baseY - h).toFixed(1) +
+      '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="1" fill="#d97757" opacity="' +
+      (v > 0 ? '.9' : '.15') + '"/>';
+  }
+  const cap = peak > 0 ? ' · PEAK ' + Math.round(peak) + '%/H' : '';
   return '<svg width="' + W + '" height="' + H + '" style="display:block">' +
-    '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">' +
-    '<stop offset="0" stop-color="#d97757" stop-opacity=".28"/>' +
-    '<stop offset="1" stop-color="#d97757" stop-opacity="0"/></linearGradient></defs>' +
-    '<line x1="0" y1="' + (H - 3) + '" x2="' + W + '" y2="' + (H - 3) + '" stroke="currentColor" opacity=".15"/>' +
-    '<line x1="0" y1="' + mid + '" x2="' + W + '" y2="' + mid + '" stroke="currentColor" opacity=".07" stroke-dasharray="2 3"/>' +
-    '<text x="1" y="7" font-size="6.5" fill="currentColor" opacity=".4" letter-spacing="1.2">SESSION · ' + label + '</text>' +
-    '<path d="' + area + '" fill="url(#g)"/>' +
-    '<path d="' + d + '" fill="none" stroke="#d97757" stroke-width="1.5" stroke-linejoin="round" opacity=".9"/></svg>';
+    '<line x1="0" y1="' + baseY + '" x2="' + W + '" y2="' + baseY + '" stroke="currentColor" opacity=".15"/>' +
+    '<text x="1" y="7" font-size="6.5" fill="currentColor" opacity=".4" letter-spacing="1.2">USED / HOUR' + cap + '</text>' +
+    bars + '</svg>';
 }
 function render(d, animate) {
   const rows = $('rows');
@@ -198,7 +210,7 @@ function render(d, animate) {
   const sp = spark(d.spark);
   $('spk').innerHTML = sp;
   $('spk').hidden = !sp;
-  $('spk').title = 'Session usage over time (6 h max)';
+  $('spk').title = 'Usage per hour (last 6 h)';
   $('time').textContent = (d.stale ? '⚠︎ ' : '') + (d.time || '');
   $('time').title = d.stale ? 'Cached data — last updated ' + d.time : 'Updated at ' + d.time;
 }
