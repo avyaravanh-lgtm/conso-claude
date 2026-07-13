@@ -295,8 +295,8 @@ final class WebPopover: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
             // le contraste du texte. Curseur = la composante alpha ci-dessous.
             glass.tintColor = NSColor(name: nil) { app in
                 let dark = app.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                return dark ? NSColor(white: 0.10, alpha: 0.40)
-                            : NSColor(white: 1.00, alpha: 0.40)
+                return dark ? NSColor(white: 0.10, alpha: 0.32)
+                            : NSColor(white: 1.00, alpha: 0.32)
             }
             glass.cornerRadius = 16
             // Masque arrondi sur la web view : coupe son bord rectangulaire (le
