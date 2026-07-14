@@ -25,6 +25,22 @@ struct UsageState {
     var stale = false
 }
 
+// OAuth Claude Code : on sait rafraîchir le token nous-mêmes (via le refreshToken
+// stocké dans le Keychain), sans dépendre de l'ouverture de Claude Code.
+let OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+let OAUTH_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
+let OAUTH_USER_AGENT = "claude-cli/1.0 (external, cli)"
+let KEYCHAIN_SERVICE = "Claude Code-credentials"
+
+struct KeychainCreds {
+    let account: String
+    let full: [String: Any]      // blob complet (contient "claudeAiOauth")
+    let oauth: [String: Any]     // full["claudeAiOauth"]
+    let accessToken: String
+    let refreshToken: String?
+    let expiresAtMs: Double?
+}
+
 let isoParser: ISO8601DateFormatter = {
     let f = ISO8601DateFormatter()
     f.formatOptions = [.withInternetDateTime]
@@ -829,20 +845,107 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Fetch
 
-    func getToken() -> String? {
+    // Exécute `/usr/bin/security` et renvoie sa sortie standard.
+    func runSecurity(_ args: [String]) -> String? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        p.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
-        let pipe = Pipe()
-        p.standardOutput = pipe
+        p.arguments = args
+        let out = Pipe()
+        p.standardOutput = out
         p.standardError = Pipe()
         do { try p.run() } catch { return nil }
         p.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let oauth = json["claudeAiOauth"] as? [String: Any],
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8)
+    }
+
+    // Lit le blob OAuth complet dans le Keychain (accessToken + refreshToken + expiry).
+    func readCreds() -> KeychainCreds? {
+        guard let blob = runSecurity(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"]),
+              let data = blob.data(using: .utf8),
+              let full = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let oauth = full["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String else { return nil }
-        return token
+        // Le compte du même item (nécessaire pour réécrire au bon endroit).
+        var account = NSUserName()
+        if let attrs = runSecurity(["find-generic-password", "-s", KEYCHAIN_SERVICE]),
+           let m = attrs.range(of: #"(?<="acct"<blob>=")[^"]*"#, options: .regularExpression) {
+            account = String(attrs[m])
+        }
+        return KeychainCreds(
+            account: account, full: full, oauth: oauth,
+            accessToken: token,
+            refreshToken: oauth["refreshToken"] as? String,
+            expiresAtMs: (oauth["expiresAt"] as? NSNumber)?.doubleValue
+        )
+    }
+
+    // Réécrit le blob OAuth mis à jour dans le Keychain (met à jour l'item existant).
+    func writeCreds(account: String, full: [String: Any]) -> Bool {
+        guard let data = try? JSONSerialization.data(withJSONObject: full),
+              let str = String(data: data, encoding: .utf8) else { return false }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        p.arguments = ["add-generic-password", "-U", "-a", account, "-s", KEYCHAIN_SERVICE, "-w", str]
+        p.standardOutput = Pipe()
+        p.standardError = Pipe()
+        do { try p.run() } catch { return false }
+        p.waitUntilExit()
+        return p.terminationStatus == 0
+    }
+
+    // Renouvelle le token via le refreshToken puis réécrit le Keychain (rotation
+    // incluse : on persiste le nouveau refreshToken pour rester en phase avec
+    // Claude Code). Renvoie le nouvel accessToken, ou nil si l'échange a échoué.
+    func refreshOAuthToken() -> String? {
+        guard let creds = readCreds(), let rt = creds.refreshToken else { return nil }
+        var req = URLRequest(url: URL(string: OAUTH_TOKEN_URL)!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Cloudflare bloque certains User-Agent (erreur 1010) : on force celui du CLI.
+        req.setValue(OAUTH_USER_AGENT, forHTTPHeaderField: "User-Agent")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "grant_type": "refresh_token",
+            "refresh_token": rt,
+            "client_id": OAUTH_CLIENT_ID,
+        ])
+        req.timeoutInterval = 15
+        var json: [String: Any]? = nil
+        let sem = DispatchSemaphore(value: 0)
+        urlSession.dataTask(with: req) { data, resp, _ in
+            defer { sem.signal() }
+            guard (resp as? HTTPURLResponse)?.statusCode == 200, let data = data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            json = obj
+        }.resume()
+        sem.wait()
+        guard let j = json, let access = j["access_token"] as? String else { return nil }
+        var oauth = creds.oauth
+        oauth["accessToken"] = access
+        if let newRt = j["refresh_token"] as? String { oauth["refreshToken"] = newRt }
+        if let expiresIn = (j["expires_in"] as? NSNumber)?.doubleValue {
+            oauth["expiresAt"] = (Date().timeIntervalSince1970 + expiresIn) * 1000
+        }
+        var full = creds.full
+        full["claudeAiOauth"] = oauth
+        guard writeCreds(account: creds.account, full: full) else { return nil }
+        return access
+    }
+
+    // Appel synchrone de l'API usage. Renvoie (réponse HTTP, données, erreur réseau).
+    func performUsageRequest(token: String) -> (HTTPURLResponse?, Data?, Error?) {
+        var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        req.timeoutInterval = 15
+        var out: (HTTPURLResponse?, Data?, Error?) = (nil, nil, nil)
+        let sem = DispatchSemaphore(value: 0)
+        urlSession.dataTask(with: req) { data, resp, err in
+            out = (resp as? HTTPURLResponse, data, err)
+            sem.signal()
+        }.resume()
+        sem.wait()
+        return out
     }
 
     func refresh(force: Bool = false) {
@@ -853,80 +956,91 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         fetching = true
         DispatchQueue.global(qos: .userInitiated).async {
             defer { DispatchQueue.main.async { self.fetching = false } }
-            guard let token = self.getToken() else {
+            guard let creds = self.readCreds() else {
                 self.apply(limits: nil, error: "Token not found — open Claude Code, then refresh.")
                 return
             }
-            var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-            req.timeoutInterval = 15
-            let sem = DispatchSemaphore(value: 0)
-            self.urlSession.dataTask(with: req) { data, resp, err in
-                defer { sem.signal() }
-                if let err = err {
-                    self.apply(limits: nil, error: "Network: \(err.localizedDescription)")
-                    return
-                }
-                guard let http = resp as? HTTPURLResponse, let data = data else {
-                    self.apply(limits: nil, error: "No response from the API.")
-                    return
-                }
-                if http.statusCode == 429 {
-                    // Rate-limité : backoff silencieux — le cache reste affiché avec
-                    // juste le ⚠ à côté de l'heure, pas de message anxiogène.
-                    let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init) ?? 900
-                    let pause = max(900, min(retryAfter, 3600))
-                    DispatchQueue.main.async {
-                        self.backoffUntil = Date().addingTimeInterval(pause)
-                        self.state.stale = !self.state.limits.isEmpty
-                        self.state.error = self.state.limits.isEmpty
-                            ? "API limit reached — retrying in \(Int(pause / 60)) min."
-                            : nil
-                        self.updateStatusTitle()
-                        if self.panel.isVisible {
-                            self.pushToWeb(animate: false)
-                            self.repositionPanel()
-                        }
-                    }
-                    return
-                }
-                if http.statusCode == 401 {
-                    self.apply(limits: nil, error: "Token expired — open Claude Code, then refresh.")
-                    return
-                }
-                guard http.statusCode == 200,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let rawLimits = json["limits"] as? [[String: Any]] else {
-                    self.apply(limits: nil, error: "API: HTTP \(http.statusCode)")
-                    return
-                }
-                var limits: [UsageLimit] = []
-                for l in rawLimits {
-                    let kind = l["kind"] as? String ?? "?"
-                    var label: String
-                    switch kind {
-                    case "session": label = "5-hour session"
-                    case "weekly_all": label = "Weekly — all models"
-                    case "weekly_scoped":
-                        let scope = l["scope"] as? [String: Any]
-                        let model = scope?["model"] as? [String: Any]
-                        label = "Weekly — \(model?["display_name"] as? String ?? "model")"
-                    default: label = kind
-                    }
-                    limits.append(UsageLimit(
-                        kind: kind,
-                        label: label,
-                        percent: (l["percent"] as? NSNumber)?.intValue ?? 0,
-                        resetsAt: parseDate(l["resets_at"] as? String),
-                        severity: l["severity"] as? String ?? "normal",
-                        isSession: kind == "session"
-                    ))
-                }
-                self.apply(limits: limits, error: nil)
-            }.resume()
-            sem.wait()
+            var token = creds.accessToken
+            var didRefresh = false
+            // Proactif : token déjà expiré (ou dans < 1 min) → on le renouvelle nous-mêmes.
+            let nowMs = Date().timeIntervalSince1970 * 1000
+            if let exp = creds.expiresAtMs, nowMs >= exp - 60_000,
+               let fresh = self.refreshOAuthToken() {
+                token = fresh
+                didRefresh = true
+            }
+            var (resp, data, err) = self.performUsageRequest(token: token)
+            // 401 malgré un token censé valide → une tentative de refresh + retry.
+            if resp?.statusCode == 401, !didRefresh, let fresh = self.refreshOAuthToken() {
+                token = fresh
+                (resp, data, err) = self.performUsageRequest(token: token)
+            }
+            self.handleUsageResponse(resp: resp, data: data, err: err)
         }
+    }
+
+    func handleUsageResponse(resp: HTTPURLResponse?, data: Data?, err: Error?) {
+        if let err = err {
+            self.apply(limits: nil, error: "Network: \(err.localizedDescription)")
+            return
+        }
+        guard let http = resp, let data = data else {
+            self.apply(limits: nil, error: "No response from the API.")
+            return
+        }
+        if http.statusCode == 429 {
+            // Rate-limité : backoff silencieux — le cache reste affiché avec
+            // juste le ⚠ à côté de l'heure, pas de message anxiogène.
+            let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init) ?? 900
+            let pause = max(900, min(retryAfter, 3600))
+            DispatchQueue.main.async {
+                self.backoffUntil = Date().addingTimeInterval(pause)
+                self.state.stale = !self.state.limits.isEmpty
+                self.state.error = self.state.limits.isEmpty
+                    ? "API limit reached — retrying in \(Int(pause / 60)) min."
+                    : nil
+                self.updateStatusTitle()
+                if self.panel.isVisible {
+                    self.pushToWeb(animate: false)
+                    self.repositionPanel()
+                }
+            }
+            return
+        }
+        if http.statusCode == 401 {
+            // Le refresh automatique a lui aussi échoué → reconnexion nécessaire.
+            self.apply(limits: nil, error: "Token expired — reconnect Claude Code (/login), then refresh.")
+            return
+        }
+        guard http.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rawLimits = json["limits"] as? [[String: Any]] else {
+            self.apply(limits: nil, error: "API: HTTP \(http.statusCode)")
+            return
+        }
+        var limits: [UsageLimit] = []
+        for l in rawLimits {
+            let kind = l["kind"] as? String ?? "?"
+            var label: String
+            switch kind {
+            case "session": label = "5-hour session"
+            case "weekly_all": label = "Weekly — all models"
+            case "weekly_scoped":
+                let scope = l["scope"] as? [String: Any]
+                let model = scope?["model"] as? [String: Any]
+                label = "Weekly — \(model?["display_name"] as? String ?? "model")"
+            default: label = kind
+            }
+            limits.append(UsageLimit(
+                kind: kind,
+                label: label,
+                percent: (l["percent"] as? NSNumber)?.intValue ?? 0,
+                resetsAt: parseDate(l["resets_at"] as? String),
+                severity: l["severity"] as? String ?? "normal",
+                isSession: kind == "session"
+            ))
+        }
+        self.apply(limits: limits, error: nil)
     }
 
     func apply(limits: [UsageLimit]?, error: String?) {

@@ -2,6 +2,18 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.2 — 2026-07-14
+
+### Auto-refresh du token
+- L'app **renouvelle le token OAuth elle-même** via le `refreshToken` du Keychain,
+  sans dépendre de l'ouverture de Claude Code. Au réveil du Mac, la conso repart
+  toute seule au lieu de rester bloquée sur « Token expired ».
+- Refresh **proactif** quand le token est expiré (ou l'est dans la minute), et
+  **réactif** en secours sur un 401, suivi d'un retry de l'appel usage.
+- Le nouveau token (rotation du `refreshToken` incluse) est **réécrit dans le
+  Keychain**, donc Claude Code reste en phase.
+- Si le refresh échoue lui aussi, message clair : « reconnect Claude Code (/login) ».
+
 ## 1.1 — 2026-07-13
 
 ### Usage chart
