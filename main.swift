@@ -1076,15 +1076,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let session = state.limits.first(where: { $0.isSession }) else { return }
         // On affiche le % RESTANT (100 − consommé), cohérent avec l'avion (« il te reste X % »).
-        // Sémantique couleur inversée : corail quand il reste peu (≤ 25 %), 0 % = à sec.
+        // Pas de dégradé de couleur : blanc (labelColor) tout du long, rouge seulement à ≤ 10 %.
         let remaining = 100 - session.percent
-        let warn = remaining <= 50 || session.severity == "warning" || session.severity == "critical"
-        let accent: NSColor = remaining <= 25 || session.severity == "critical"
-            ? .systemRed
-            : (warn ? .systemOrange : .labelColor)
+        let crit = remaining <= 10
+        let accent: NSColor = crit ? .systemRed : .labelColor
         // Même taille que les autres extras du menu bar (batterie, etc.) : ~11pt, poids regular.
         // Mesuré : la batterie rend plus petit que systemFontSize (13pt) → smallSystemFontSize.
-        // On ne passe en gras que pour attirer l'œil quand il reste peu.
+        // On ne passe en gras que dans le rouge (≤ 10 %), pour attirer l'œil.
         let barSize = NSFont.smallSystemFontSize
         let title = NSMutableAttributedString(string: "✳︎ ", attributes: [
             .foregroundColor: NSColor.labelColor,
@@ -1092,7 +1090,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ])
         title.append(NSAttributedString(string: "\(remaining) %", attributes: [
             .foregroundColor: accent,
-            .font: NSFont.monospacedDigitSystemFont(ofSize: barSize, weight: warn ? .bold : .regular),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: barSize, weight: crit ? .bold : .regular),
         ]))
         statusItem.button?.attributedTitle = title
     }
