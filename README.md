@@ -17,6 +17,10 @@
 
 **`✳ 62 %`** sits in your menu bar — how much of your 5-hour session is **left**, always visible (coral when little remains). Click it for a compact popover: session and weekly limits as animated bars, a sparkline of your session over time, and a burn-rate prediction («&nbsp;empty ~14:30&nbsp;») when you're consuming fast enough to run dry before the reset.
 
+<p align="center">
+  <img src="assets/popover.png" width="380" alt="The popover: 5-hour session, weekly all-models and weekly Fable as animated bars, plus a per-hour usage sparkline.">
+</p>
+
 When you cross **50%, 75% and 90%** of a limit, a small coral prop plane flies across your screen towing an ivory banner: how much you have left, plus a rotating encouragement — *«&nbsp;Make these tokens count.&nbsp;»*, *«&nbsp;Maybe it's time to rest.&nbsp;»* (the pool is time-aware: late-night and Friday-evening phrases included). Once per session, never twice for the same threshold.
 
 <p align="center">
