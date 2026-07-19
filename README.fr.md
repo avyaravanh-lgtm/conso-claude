@@ -6,6 +6,10 @@ permanence — le pourcentage **restant** de la session — popover discret au c
 corail qui traverse l'écran avec une phrase d'encouragement quand il te reste
 50 / 25 / 10 %.
 
+<p align="center">
+  <img src="assets/popover.png" width="380" alt="Le popover : session 5 h, hebdo tous modèles et hebdo Fable en barres animées, plus une sparkline de conso par heure.">
+</p>
+
 > L'interface de l'app est en **anglais**. Port **Windows** : [`windows/`](windows/README.md).
 
 ## Utilisation
