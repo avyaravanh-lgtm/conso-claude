@@ -2,6 +2,22 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.3.3 — 2026-07-21
+
+### Plus de bouton « Sign in » fantôme quand un token existe
+- **Bug corrigé** : un essai de login manuel raté (mauvais code collé, annulation)
+  mettait `needsLogin=true` de façon collante — le gros bouton « Sign in » restait
+  affiché **alors qu'un token Claude Code valide était présent et lu**. `needsLogin`
+  est désormais re-dérivé à chaque refresh depuis l'état réel du token : bouton
+  seulement s'il n'y a vraiment aucun token lisible.
+- `loginFailed` ne force plus le bouton ; il relance un refresh qui rétablit l'état.
+- **Garde-fou** : « Sign in » sur une machine qui a déjà un token (Claude Code
+  connecté) demande maintenant confirmation — se reconnecter écraserait le token
+  par un scope plus étroit. Sur une telle machine, l'app affiche la conso toute
+  seule, aucune connexion n'est nécessaire.
+- Effet de bord réglé : la hauteur du popover (et les « coins » de l'état sign-in)
+  ne s'affichent plus par erreur sur une machine déjà connectée.
+
 ## 1.3.2 — 2026-07-21
 
 ### Login OAuth aligné à l'identique sur `claude setup-token`
