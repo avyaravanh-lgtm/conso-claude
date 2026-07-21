@@ -184,6 +184,7 @@ body {
 @keyframes rot { to { transform: rotate(360deg); } }
 #time { margin-left:auto; font-size:9px; font-variant-numeric:tabular-nums;
   color: light-dark(rgba(20,18,15,.25), rgba(245,240,232,.28)); }
+#ver { font-size:9px; margin-left:6px; color: light-dark(rgba(20,18,15,.22), rgba(245,240,232,.25)); }
 /* Accessibilité : respecte « Augmenter le contraste » (Réglages > Accessibilité
    > Affichage). On densifie tous les gris uniquement si l'utilisateur l'a activé —
    le look discret reste par défaut. Booster #spk relève aussi le texte SVG du
@@ -204,6 +205,7 @@ body {
   <div class="btn" id="btn-r" title="Refresh"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3"/></svg></div>
   <div class="btn" id="btn-p" title="Test the plane"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M14.5 1.5 1.5 6.8l4.2 1.9m8.8-7.2L9.2 14.5 7.3 10.3m7.2-8.8L5.7 8.7"/></svg></div>
   <span id="time"></span>
+  <span id="ver"></span>
 </div>
 <script>
 const $ = id => document.getElementById(id);
@@ -314,6 +316,7 @@ function render(d, animate) {
   // (l'heure de dernière maj reste dispo au survol).
   $('time').textContent = d.stale ? '⚠︎' : '';
   $('time').title = d.stale ? 'Cached data — last updated ' + d.time : 'Updated at ' + d.time;
+  $('ver').textContent = d.version ? 'v' + d.version : '';
 }
 const post = m => window.webkit.messageHandlers.act.postMessage(m);
 $('btn-r').addEventListener('click', () => {
@@ -579,6 +582,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showContextMenu() {
         let menu = NSMenu()
+        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let verItem = NSMenuItem(title: "Conso Claude \(ver)", action: nil, keyEquivalent: "")
+        verItem.isEnabled = false
+        menu.addItem(verItem)
+        menu.addItem(.separator())
         let refreshItem = NSMenuItem(title: "Refresh", action: #selector(forceRefresh), keyEquivalent: "r")
         refreshItem.target = self
         menu.addItem(refreshItem)
@@ -682,6 +690,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             "stale": state.stale,
             "spark": sparkPayload(),
             "needsLogin": state.needsLogin && !loggingIn,
+            "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
         ]
         if let e = state.error { payload["error"] = e }
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
