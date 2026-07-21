@@ -163,6 +163,9 @@ body {
   border-radius:8px; font:600 12px/1 -apple-system; color:#fff; cursor:pointer;
   background:linear-gradient(90deg,#f2a984,#d97757); box-shadow:0 1px 4px rgba(217,119,87,.4);
   transition: filter .12s ease, transform .1s ease; }
+/* Sans ça, `#login { display:block }` bat l'attribut [hidden] (spécificité id >
+   attribut) et le bouton reste TOUJOURS visible, même needsLogin=false. */
+#login[hidden] { display:none; }
 #login:hover { filter:brightness(1.06); }
 #login:active { transform:scale(.98); }
 #spk { margin:2px 0 4px; padding-top:10px; color: light-dark(rgba(20,18,15,.8), rgba(245,240,232,.8));

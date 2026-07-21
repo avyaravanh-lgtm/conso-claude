@@ -2,6 +2,21 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.3.4 — 2026-07-21
+
+### LA vraie cause du bouton « Sign in » toujours affiché : un bug CSS
+Depuis la 1.3, le bouton « Sign in to Claude » restait visible **en permanence**,
+même avec un token valide et `needsLogin=false`. Toutes les corrections de logique
+Swift précédentes étaient correctes mais **masquées** par ce bug :
+- La règle `#login { display:block }` a une spécificité (id) supérieure à celle de
+  l'attribut `[hidden]` du navigateur → `element.hidden = true` était **ignoré**,
+  le bouton s'affichait toujours.
+- Fix : `#login[hidden] { display:none }`.
+
+Vérifié **à l'écran** (capture du popover) : `needsLogin=false` → bouton bien
+masqué, popover propre (conso + graphe), coins arrondis corrects. La logique
+`needsLogin` des versions 1.3.1→1.3.3 fonctionnait déjà ; il ne manquait que ça.
+
 ## 1.3.3 — 2026-07-21
 
 ### Plus de bouton « Sign in » fantôme quand un token existe
