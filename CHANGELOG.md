@@ -2,6 +2,27 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.3.2 — 2026-07-21
+
+### Login OAuth aligné à l'identique sur `claude setup-token`
+Le 1.3.1 échouait encore (« Invalid request format »). J'ai capturé l'URL réelle
+générée par `claude setup-token` et corrigé les trois derniers écarts :
+- **Scope** : `user:inference` **seul** (j'envoyais 3 scopes → rejet).
+- **Redirect** : `https://platform.claude.com/oauth/code/callback` (callback
+  hébergé qui affiche le code), au lieu d'un serveur loopback local.
+- **Encodage** : `redirect_uri` et `scope` sont maintenant percent-encodés
+  (`%3A`, `%2F`) exactement comme le CLI ; URLComponents les laissait en clair.
+- **Flux** = copier-coller (comme `setup-token`) : le navigateur affiche un code,
+  on le colle dans l'app. Le serveur loopback (jamais accepté par le serveur) est
+  supprimé, ainsi que la dépendance au framework Network.
+- L'échange essaie les deux endpoints de token connus (api.anthropic.com puis
+  platform.claude.com) par sécurité.
+
+Vérif : l'URL d'autorisation produite est désormais **byte-identique** à celle de
+`claude setup-token` (qui fonctionne), donc l'erreur « Invalid request format »
+est éliminée. Le seul maillon non automatisable reste le clic « Autoriser » +
+collage du code.
+
 ## 1.3.1 — 2026-07-21
 
 ### Correctif login OAuth (le 1.3 ne se connectait pas)
