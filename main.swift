@@ -811,6 +811,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // callback hébergé par Claude).
     @objc func startLogin() {
         if loggingIn { return }
+        // Garde-fou : si un token est déjà en place (Claude Code connecté sur cette
+        // machine), se reconnecter l'écraserait par un token à scope plus étroit.
+        // On confirme d'abord — inutile et risqué de le faire pour rien.
+        if readCreds() != nil {
+            let warn = NSAlert()
+            warn.messageText = "Already signed in"
+            warn.informativeText = "This Mac already has a Claude token (from Claude Code). "
+                + "You don't need to sign in here — the usage shows automatically. "
+                + "Signing in again would replace that token. Continue anyway?"
+            warn.addButton(withTitle: "Cancel")
+            warn.addButton(withTitle: "Sign in anyway")
+            NSApp.activate(ignoringOtherApps: true)
+            guard warn.runModal() == .alertSecondButtonReturn else { return }
+        }
         loggingIn = true
         let verifier = randomToken()
         let stateTok = randomToken(16)
@@ -925,10 +939,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func loginFailed(_ message: String) {
         loggingIn = false
-        state.needsLogin = true
         state.error = message
         updateStatusTitle()
         if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
+        // On NE force PAS needsLogin ici : un token valide peut très bien exister
+        // (ex. sur la machine où Claude Code est connecté). Un refresh re-dérive
+        // l'état réel — bouton « Sign in » seulement s'il n'y a vraiment pas de token.
+        refresh(force: true)
     }
 
     // MARK: Seuils → avion
@@ -1157,6 +1174,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.apply(limits: nil, error: "Not signed in to Claude.")
                 return
             }
+            // Un token lisible existe → on n'a JAMAIS besoin de « Sign in » (on sait
+            // le rafraîchir nous-mêmes). On lève tout de suite un éventuel needsLogin
+            // resté collé après un essai de login manuel raté.
+            DispatchQueue.main.async { self.state.needsLogin = false }
             var token = creds.accessToken
             var didRefresh = false
             // Proactif : token déjà expiré (ou dans < 1 min) → on le renouvelle nous-mêmes.
