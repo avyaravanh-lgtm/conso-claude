@@ -4,12 +4,15 @@ All notable changes to Conso Claude are documented here.
 
 ## 1.3.6 — 2026-07-21
 
-### Coin haut-gauche du popover enfin arrondi
-- Le verre (NSGlassEffectView) arrondit ses coins en « squircle » (cornerCurve
-  continu, style Apple), mais la web view masquait avec un `cornerRadius`
-  **circulaire** par défaut → son coin dépassait le verre en haut-gauche, d'où le
-  petit artefact carré (« cadre fantôme »). Corrigé en passant la web view en
-  `cornerCurve = .continuous` : les deux coins coïncident, popover propre.
+### Coin haut-gauche du popover : fond opaque, fini le glint
+- Le coin haut-gauche montrait une tache colorée (« moche ») : le Liquid Glass
+  (NSGlassEffectView) — puis le matériau frosté (NSVisualEffectView) — laissaient
+  **transparaître/refléter le fond derrière la fenêtre** et le concentraient en un
+  glint de bord au coin (ex. un onglet vert derrière → coin verdâtre). Vérifié à
+  l'écran sur fond vert pur.
+- **Fix** : la carte du popover est désormais **opaque** (fond ivoire adaptatif
+  clair/sombre peint par le HTML), coins arrondis en squircle continu + hairline
+  discrète. Rendu net et identique sur **n'importe quel** fond, plus aucun glint.
 
 ## 1.3.5 — 2026-07-21
 
