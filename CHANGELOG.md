@@ -2,6 +2,22 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.3.1 — 2026-07-21
+
+### Correctif login OAuth (le 1.3 ne se connectait pas)
+- **Mauvais endpoint d'autorisation.** Le 1.3 tapait `claude.ai/oauth/authorize`
+  (→ HTTP 403 « Invalid request format »). Le login de Claude Code a migré sur
+  **`claude.com/cai/oauth/authorize`** — corrigé. Valeurs relevées directement
+  dans le binaire `claude-code` de prod (client_id, scopes, ordre des paramètres).
+- **`code=true` manquant** dans le flux loopback : il est maintenant toujours
+  envoyé, comme le fait le CLI.
+- **Redirect en `localhost`** (et non `127.0.0.1`) — c'est la forme déclarée comme
+  autorisée côté client OAuth ; le serveur local écoute désormais sur l'interface
+  **loopback** (couvre IPv4 et IPv6, rien exposé au réseau).
+- Vérifs : URL d'autorisation 307 (vs 403 avant), endpoint d'échange qui accepte
+  le format (`invalid_grant` sur code bidon, pas `invalid_request`), PKCE conforme
+  RFC 7636, capture loopback du `localhost` OK.
+
 ## 1.3 — 2026-07-21
 
 ### Login intégré — l'app est autonome

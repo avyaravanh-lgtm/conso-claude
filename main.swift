@@ -37,7 +37,10 @@ struct UsageState {
 // pas besoin d'installer Claude Code ni de passer par le Terminal.
 let OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 let OAUTH_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
-let OAUTH_AUTHORIZE_URL = "https://claude.ai/oauth/authorize"
+// URL d'autorisation « subscription » de Claude Code. NB : ce n'est PLUS
+// claude.ai/oauth/authorize (qui renvoie 403 « Invalid request format ») — le login
+// a migré sur claude.com/cai. Valeurs relevées dans le binaire claude-code en prod.
+let OAUTH_AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize"
 let OAUTH_SCOPES = "org:create_api_key user:profile user:inference"
 // Callback « console » : la page affiche le code à copier (repli sans serveur local).
 let OAUTH_CONSOLE_REDIRECT = "https://console.anthropic.com/oauth/code/callback"
@@ -81,7 +84,10 @@ final class OAuthLoopback {
     func start() -> UInt16? {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
-        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
+        // On écoute sur l'interface loopback (lo0) : couvre à la fois 127.0.0.1 et
+        // ::1, donc le retour du navigateur sur `localhost:<port>` est capté quelle
+        // que soit la résolution IPv4/IPv6 — et rien n'est exposé au réseau local.
+        params.requiredInterfaceType = .loopback
         guard let l = try? NWListener(using: params) else { return nil }
         listener = l
         l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
@@ -884,15 +890,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         loopback = server
         loggingIn = true
-        let redirect = "http://127.0.0.1:\(port)/callback"
+        // `localhost` (et non 127.0.0.1) : c'est la forme que le client OAuth de
+        // Claude Code déclare comme redirect autorisé.
+        let redirect = "http://localhost:\(port)/callback"
         server.onResult = { [weak self] code, retState in
             DispatchQueue.main.async {
                 self?.completeLogin(code: code, returnedState: retState,
                                     verifier: verifier, expectedState: stateTok, redirect: redirect)
             }
         }
-        openAuthorize(redirect: redirect, state: stateTok,
-                      challenge: pkceChallenge(verifier), showCode: false)
+        openAuthorize(redirect: redirect, state: stateTok, challenge: pkceChallenge(verifier))
         // Garde-fou : si le navigateur ne revient pas (autorisation refusée, onglet
         // fermé…), on ne reste pas bloqué en « attente ».
         let to = DispatchWorkItem { [weak self] in self?.loginTimedOut() }
@@ -909,10 +916,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         pasteLogin(verifier: randomToken(), state: randomToken(16))
     }
 
-    // Construit l'URL d'autorisation OAuth (mêmes paramètres que le CLI) et l'ouvre.
-    func openAuthorize(redirect: String, state: String, challenge: String, showCode: Bool) {
+    // Construit l'URL d'autorisation OAuth (paramètres et ordre calqués sur le CLI
+    // Claude Code) et l'ouvre dans le navigateur. `code=true` est toujours présent,
+    // que le retour se fasse par loopback ou par copier-coller.
+    func openAuthorize(redirect: String, state: String, challenge: String) {
         var c = URLComponents(string: OAUTH_AUTHORIZE_URL)!
-        var items: [URLQueryItem] = [
+        c.queryItems = [
+            .init(name: "code", value: "true"),
             .init(name: "client_id", value: OAUTH_CLIENT_ID),
             .init(name: "response_type", value: "code"),
             .init(name: "redirect_uri", value: redirect),
@@ -921,8 +931,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .init(name: "code_challenge_method", value: "S256"),
             .init(name: "state", value: state),
         ]
-        if showCode { items.insert(.init(name: "code", value: "true"), at: 0) }
-        c.queryItems = items
         if let url = c.url { NSWorkspace.shared.open(url) }
     }
 
@@ -942,7 +950,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Repli copier-coller : page « console » (affiche le code) + saisie dans une alerte.
     func pasteLogin(verifier: String, state stateTok: String) {
         openAuthorize(redirect: OAUTH_CONSOLE_REDIRECT, state: stateTok,
-                      challenge: pkceChallenge(verifier), showCode: true)
+                      challenge: pkceChallenge(verifier))
         let alert = NSAlert()
         alert.messageText = "Sign in to Claude"
         alert.informativeText = "Approve access in your browser, copy the code shown, and paste it here."
