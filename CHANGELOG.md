@@ -2,6 +2,20 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.3.5 — 2026-07-21
+
+### Numéro de version visible + constat sur le login
+- **Version affichée** dans l'app : en haut du menu clic droit (« Conso Claude
+  1.3.5 ») et dans le pied du popover. Permet de vérifier d'un coup d'œil quelle
+  build tourne.
+- **Login OAuth — diagnostic** : l'échec « Invalid request format » après clic sur
+  « Autoriser » n'est **pas** un bug de l'app. Vérifié en lançant l'outil officiel
+  `claude setup-token` : il ouvre une URL byte-identique à celle de l'app et
+  échoue **exactement pareil** au même moment. C'est un problème côté serveur
+  d'autorisation (ou lié à un compte ayant déjà autorisé Claude Code). L'app lit
+  toujours parfaitement le token existant ; le login intégré reste en place pour
+  quand le flux d'Anthropic refonctionnera / sur une machine jamais autorisée.
+
 ## 1.3.4 — 2026-07-21
 
 ### LA vraie cause du bouton « Sign in » toujours affiché : un bug CSS
