@@ -121,7 +121,7 @@ let POPOVER_HTML = #"""
 <!doctype html><html><head><meta charset="utf-8"><style>
 :root { color-scheme: light dark; }
 * { margin:0; padding:0; box-sizing:border-box; -webkit-user-select:none; cursor:default; }
-html,body { background:transparent; overflow:hidden; }
+html,body { background: light-dark(#f5f0e8, #201d19); overflow:hidden; }
 body {
   font: 12px/1.4 -apple-system, "SF Pro Text", sans-serif;
   color: light-dark(rgba(20,18,15,.88), rgba(245,240,232,.92));
@@ -362,35 +362,21 @@ final class WebPopover: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         if ready { webView.evaluateJavaScript(js) } else { pendingJS = js }
     }
 
-    /// Vue de contenu du popover. Sur macOS 26+ on enveloppe la web view dans un
-    /// NSGlassEffectView (Liquid Glass natif) ; repli sur la web view nue avant.
+    /// Vue de contenu du popover : carte arrondie **opaque**. On a abandonné le
+    /// Liquid Glass (NSGlassEffectView) ET le matériau frosté (NSVisualEffectView) :
+    /// tous deux laissaient transparaître/refléter le fond derrière la fenêtre, ce
+    /// qui produisait un glint coloré au coin haut-gauche (ex. un onglet vert
+    /// derrière → coin verdâtre). Un fond solide (couleur adaptative peinte par le
+    /// HTML) garantit un rendu net et identique sur n'importe quel fond. Les coins
+    /// arrondis (squircle continu) viennent du masque de calque de la web view, et
+    /// une hairline discrète détache la carte des fonds clairs.
     func contentView() -> NSView {
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            glass.style = .regular        // matériau adaptatif : garantit la lisibilité
-                                          // quel que soit le fond (.clear était illisible sur blanc)
-            // Voile adaptatif : rend le verre un peu moins transparent et stabilise
-            // le contraste du texte. Curseur = la composante alpha ci-dessous.
-            glass.tintColor = NSColor(name: nil) { app in
-                let dark = app.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                return dark ? NSColor(white: 0.10, alpha: 0.32)
-                            : NSColor(white: 1.00, alpha: 0.32)
-            }
-            glass.cornerRadius = 16
-            // Masque arrondi sur la web view : coupe son bord rectangulaire (le
-            // « cadre fantôme » qu'on devinait aux coins). IMPORTANT : le verre
-            // arrondit en « squircle » (cornerCurve continu, style Apple) ; sans
-            // aligner la web view dessus, son coin circulaire dépasse le verre au
-            // coin haut-gauche → petit artefact carré. On force donc .continuous.
-            webView.wantsLayer = true
-            webView.layer?.cornerRadius = 16
-            webView.layer?.cornerCurve = .continuous
-            webView.layer?.masksToBounds = true
-            webView.autoresizingMask = [.width, .height]
-            webView.frame = glass.bounds
-            glass.contentView = webView
-            return glass
-        }
+        webView.wantsLayer = true
+        webView.layer?.cornerRadius = 16
+        webView.layer?.cornerCurve = .continuous
+        webView.layer?.masksToBounds = true
+        webView.layer?.borderWidth = 0.5
+        webView.layer?.borderColor = NSColor(white: 0.5, alpha: 0.22).cgColor
         return webView
     }
 }
