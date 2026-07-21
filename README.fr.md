@@ -38,8 +38,8 @@ banderole, partagé avec l'outil d'aperçu du scratchpad), `phrases.json`
 
 1. `./build.sh --zip` → envoyer **Conso Claude.zip**.
 2. Côté collègue :
-   - **Prérequis : Claude Code installé et connecté** (l'app lit son token OAuth
-     dans le trousseau — c'est lui qui fournit les données de conso).
+   - **Prérequis : un abonnement Claude Pro/Max.** Pas besoin de Claude Code ni
+     du Terminal — l'app sait se connecter toute seule.
    - Dézipper, glisser `Conso Claude.app` dans `/Applications`.
    - Premier lancement : l'app n'est pas notarisée → macOS la bloque (« logiciel
      malveillant »). Cliquer **« Terminer »** (pas « Placer dans la corbeille »),
@@ -47,8 +47,9 @@ banderole, partagé avec l'outil d'aperçu du scratchpad), `phrases.json`
      **« Ouvrir quand même »**. Une seule fois. (Le clic droit → Ouvrir ne
      suffit plus depuis macOS 15. Alternative terminal :
      `xattr -d com.apple.quarantine "/Applications/Conso Claude.app"`.)
-   - Une boîte « security souhaite accéder à "Claude Code-credentials" » peut
-     apparaître → **Toujours autoriser** (une seule fois).
+   - Cliquer sur l'icône ✳ → **Sign in to Claude** : le navigateur s'ouvre, on
+     autorise, c'est fini — le token est écrit dans le trousseau tout seul. (Si
+     Claude Code est déjà connecté, l'app réutilise son token, rien à faire.)
 3. Pour une diffusion large sans friction : compte Apple Developer (99 $/an)
    + `codesign` Developer ID + notarisation. Pas nécessaire entre collègues.
 
@@ -80,7 +81,9 @@ Binaire universel : tourne sur Apple Silicon et Intel. macOS 15 minimum.
 - Le popover échappe toute donnée externe avant affichage (anti-injection HTML).
 - La fenêtre de la banderole ignore la souris et ne capte aucune saisie.
 
-## Si `✳ !` ou « Token expiré »
+## Si `✳ !` ou « Not signed in »
 
-Ouvrir Claude Code (terminal ou app) pour rafraîchir le token, puis clic droit
-→ Refresh.
+Cliquer sur l'icône ✳ → **Sign in to Claude** (le navigateur s'ouvre, on autorise).
+Si le token existait déjà, un simple clic droit → Refresh suffit. Astuce : maintenir
+**⌥** sur le menu affiche un repli « coller le code » au cas où le navigateur ne
+revienne pas tout seul.
