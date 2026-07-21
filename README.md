@@ -31,12 +31,12 @@ When you cross **50%, 75% and 90%** of a limit, a small coral prop plane flies a
 
 ## Install
 
-**Requirements:** macOS 15+, and [Claude Code](https://claude.com/claude-code) installed and **logged in with a Pro/Max subscription** (the app reads its OAuth token from the Keychain — that's where the usage data comes from). API-key setups (`ANTHROPIC_API_KEY`, Bedrock/Vertex) have no usage limits to show.
+**Requirements:** macOS 15+ and a **Pro/Max Claude subscription**. You don't need Claude Code or the Terminal — the app can sign you in itself. (API-key setups — `ANTHROPIC_API_KEY`, Bedrock/Vertex — have no usage limits to show.)
 
 1. Download `Conso Claude.zip` from [Releases](../../releases), unzip, drag to `/Applications`.
 2. First launch: the app is not notarized, so macOS blocks it — click **"Done"** (not "Move to Trash"), then open **System Settings → Privacy & Security**, scroll down to *"Conso Claude was blocked…"* and click **"Open Anyway"**. One time only.
    *Terminal alternative:* `xattr -d com.apple.quarantine "/Applications/Conso Claude.app"`
-3. If macOS asks whether `security` can access "Claude Code-credentials" → **Always Allow** (once).
+3. Click the ✳ icon → **Sign in to Claude**. Your browser opens, you approve access, and you're done — the token lands in the Keychain automatically. (Already using Claude Code? The app reuses its existing token, so there's nothing to sign in to.)
 4. Right-click the ✳ icon → "Start with macOS" to make it permanent.
 
 ## Build from source
@@ -76,7 +76,7 @@ Drop a `phrases.json` in `~/Library/Application Support/Conso Claude/` to extend
 
 - The usage endpoint is not officially documented; if Anthropic changes it, the app shows a friendly error until updated.
 - Not notarized (no Apple Developer account) — hence the "Open Anyway" dance in System Settings.
-- If the menu bar shows `✳ !`: open Claude Code once to refresh the token, then right-click → Refresh.
+- If the menu bar shows `✳ !`: click the icon → **Sign in to Claude** (or, if you already had a token, right-click → Refresh). Hold **⌥** on the menu for a paste-the-code fallback if your browser doesn't return automatically.
 
 ---
 

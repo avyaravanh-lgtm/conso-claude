@@ -2,6 +2,23 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.3 — 2026-07-21
+
+### Login intégré — l'app est autonome
+- Nouveau bouton **« Sign in to Claude »** dans le popover (et dans le menu clic
+  droit). Plus besoin d'installer Claude Code ni de passer par le Terminal : l'app
+  fait **le premier login OAuth elle-même** et écrit le token dans le Keychain.
+- Flux **loopback local + PKCE** (comme le login de Claude Code) : le navigateur
+  s'ouvre, on autorise, le retour est capté automatiquement — **zéro copier-coller**.
+- **Repli copier-coller** accessible en maintenant **⌥** sur le menu (ou déclenché
+  automatiquement si le serveur local ne peut pas démarrer) : la page affiche un
+  code, on le colle dans l'app.
+- Garde-fou **timeout 2 min** : plus de blocage en « attente d'autorisation » si
+  l'onglet est fermé ou l'accès refusé.
+- Messages remaniés : « Token not found → open Claude Code » devient
+  « Not signed in » avec le bouton de connexion ; le 401 devient « Session expired
+  — sign in again ».
+
 ## 1.2 — 2026-07-14
 
 ### Auto-refresh du token

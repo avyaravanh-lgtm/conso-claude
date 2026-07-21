@@ -6,6 +6,9 @@
 import Cocoa
 import WebKit
 import ServiceManagement
+import CryptoKit
+import Security
+import Network
 
 // MARK: - Données
 
@@ -23,14 +26,111 @@ struct UsageState {
     var error: String?
     var fetchedAt: Date?
     var stale = false
+    // Aucun token en Keychain (ou expiré) → le popover propose « Sign in » plutôt
+    // qu'un message qui renvoie vers le Terminal.
+    var needsLogin = false
 }
 
 // OAuth Claude Code : on sait rafraîchir le token nous-mêmes (via le refreshToken
-// stocké dans le Keychain), sans dépendre de l'ouverture de Claude Code.
+// stocké dans le Keychain), sans dépendre de l'ouverture de Claude Code. Mieux : on
+// sait aussi faire le PREMIER login (flux OAuth complet), donc l'app est autonome —
+// pas besoin d'installer Claude Code ni de passer par le Terminal.
 let OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 let OAUTH_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
+let OAUTH_AUTHORIZE_URL = "https://claude.ai/oauth/authorize"
+let OAUTH_SCOPES = "org:create_api_key user:profile user:inference"
+// Callback « console » : la page affiche le code à copier (repli sans serveur local).
+let OAUTH_CONSOLE_REDIRECT = "https://console.anthropic.com/oauth/code/callback"
 let OAUTH_USER_AGENT = "claude-cli/1.0 (external, cli)"
 let KEYCHAIN_SERVICE = "Claude Code-credentials"
+
+// MARK: - PKCE
+
+// base64url sans padding — encodage attendu par le challenge PKCE et le state.
+func b64url(_ d: Data) -> String {
+    d.base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+}
+
+// Jeton aléatoire cryptographique (verifier PKCE, state anti-CSRF).
+func randomToken(_ n: Int = 32) -> String {
+    var bytes = [UInt8](repeating: 0, count: n)
+    _ = SecRandomCopyBytes(kSecRandomDefault, n, &bytes)
+    return b64url(Data(bytes))
+}
+
+// challenge = base64url(SHA256(verifier)) — méthode S256.
+func pkceChallenge(_ verifier: String) -> String {
+    b64url(Data(SHA256.hash(data: Data(verifier.utf8))))
+}
+
+// MARK: - Serveur loopback OAuth
+
+// Petit serveur HTTP sur 127.0.0.1 (port éphémère) : reçoit la redirection OAuth
+// (`/callback?code=…&state=…`) sans que l'utilisateur ait à copier-coller quoi que
+// ce soit. C'est le même principe que le login de Claude Code.
+final class OAuthLoopback {
+    private var listener: NWListener?
+    private var connections: [NWConnection] = []
+    private var fired = false
+    var onResult: ((_ code: String?, _ state: String?) -> Void)?
+
+    // Démarre l'écoute et renvoie le port attribué, ou nil si l'ouverture échoue.
+    func start() -> UInt16? {
+        let params = NWParameters.tcp
+        params.allowLocalEndpointReuse = true
+        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
+        guard let l = try? NWListener(using: params) else { return nil }
+        listener = l
+        l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
+        let sem = DispatchSemaphore(value: 0)
+        l.stateUpdateHandler = { st in
+            switch st {
+            case .ready, .failed, .cancelled: sem.signal()
+            default: break
+            }
+        }
+        l.start(queue: .global())
+        _ = sem.wait(timeout: .now() + 3)
+        return l.port?.rawValue
+    }
+
+    private func accept(_ conn: NWConnection) {
+        connections.append(conn)
+        conn.start(queue: .global())
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, _, _ in
+            guard let self = self else { return }
+            var code: String?, state: String?
+            if let data = data, let req = String(data: data, encoding: .utf8),
+               let line = req.split(separator: "\r\n").first,
+               let path = line.split(separator: " ").dropFirst().first,
+               let comps = URLComponents(string: "http://localhost\(path)") {
+                for item in comps.queryItems ?? [] {
+                    if item.name == "code" { code = item.value }
+                    if item.name == "state" { state = item.value }
+                }
+            }
+            let ok = code != nil
+            let body = ok
+                ? "<h2>Signed in \u{2713}</h2><p>You can close this tab and return to Conso&nbsp;Claude.</p>"
+                : "<h2>Sign-in failed</h2><p>Please try again from the app.</p>"
+            let html = "<!doctype html><meta charset=utf-8><title>Conso Claude</title>" +
+                "<body style='font:16px -apple-system;text-align:center;margin-top:18vh;color:#333'>\(body)</body>"
+            let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n" +
+                "Content-Length: \(html.utf8.count)\r\nConnection: close\r\n\r\n\(html)"
+            conn.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
+            // Une seule notification : le navigateur peut ouvrir /favicon.ico en plus.
+            if ok, !self.fired { self.fired = true; self.onResult?(code, state) }
+        }
+    }
+
+    func stop() {
+        listener?.cancel(); listener = nil
+        connections.forEach { $0.cancel() }; connections.removeAll()
+    }
+}
 
 struct KeychainCreds {
     let account: String
@@ -117,6 +217,12 @@ body {
 }
 @keyframes shine { to { left:110%; } }
 #err { font-size:10px; color:#e8940c; margin:-4px 0 8px; }
+#login { display:block; width:100%; margin:2px 0 8px; padding:7px 10px; border:none;
+  border-radius:8px; font:600 12px/1 -apple-system; color:#fff; cursor:pointer;
+  background:linear-gradient(90deg,#f2a984,#d97757); box-shadow:0 1px 4px rgba(217,119,87,.4);
+  transition: filter .12s ease, transform .1s ease; }
+#login:hover { filter:brightness(1.06); }
+#login:active { transform:scale(.98); }
 #spk { margin:2px 0 4px; padding-top:10px; color: light-dark(rgba(20,18,15,.8), rgba(245,240,232,.8));
   border-top:.5px solid light-dark(rgba(20,18,15,.08), rgba(245,240,232,.09)); }
 .eta { color:#e8940c; }
@@ -147,6 +253,7 @@ body {
 </style></head><body>
 <div id="rows"></div>
 <div id="err" hidden></div>
+<button id="login" hidden>Sign in to Claude</button>
 <div id="spk" hidden></div>
 <div id="foot">
   <div class="btn" id="btn-r" title="Refresh"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3"/></svg></div>
@@ -250,6 +357,10 @@ function render(d, animate) {
   });
   $('err').hidden = !d.error;
   $('err').textContent = d.error || '';
+  const lg = $('login');
+  lg.hidden = !d.needsLogin;
+  lg.textContent = 'Sign in to Claude';
+  lg.disabled = false;
   const sp = spark(d.spark);
   $('spk').innerHTML = sp;
   $('spk').hidden = !sp;
@@ -265,6 +376,9 @@ $('btn-r').addEventListener('click', () => {
   post('refresh');
 });
 $('btn-p').addEventListener('click', () => post('plane'));
+$('login').addEventListener('click', () => {
+  $('login').textContent = 'Opening browser…'; $('login').disabled = true; post('login');
+});
 </script>
 </body></html>
 """#
@@ -469,6 +583,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var lastPercents: [String: Int] = [:]
     let thresholds = [50, 75, 90]
 
+    // Login OAuth en cours (serveur loopback + PKCE + garde-fou timeout).
+    var loopback: OAuthLoopback?
+    var loginTimeout: DispatchWorkItem?
+    var loggingIn = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "✳︎ …"
@@ -490,6 +609,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             switch action {
             case "refresh": self?.refresh(force: true)
             case "plane": self?.testPlane()
+            case "login": self?.startLogin()
             default: break
             }
         }
@@ -522,6 +642,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let planeItem = NSMenuItem(title: "Test the plane ✈️", action: #selector(testPlane), keyEquivalent: "")
         planeItem.target = self
         menu.addItem(planeItem)
+        menu.addItem(.separator())
+        // « Sign in » ouvre le flux OAuth intégré. Alt (⌥) révèle le repli copier-coller,
+        // utile si le retour automatique par le navigateur ne se fait pas.
+        let signInItem = NSMenuItem(title: "Sign in to Claude…", action: #selector(startLogin), keyEquivalent: "")
+        signInItem.target = self
+        menu.addItem(signInItem)
+        let pasteItem = NSMenuItem(title: "Sign in — paste code…", action: #selector(startPasteLogin), keyEquivalent: "")
+        pasteItem.target = self
+        pasteItem.isAlternate = true
+        pasteItem.keyEquivalentModifierMask = [.option]
+        menu.addItem(pasteItem)
         menu.addItem(.separator())
         let loginItem = NSMenuItem(title: "Start with macOS", action: #selector(toggleLogin), keyEquivalent: "")
         loginItem.target = self
@@ -587,6 +718,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let n = max(state.limits.count, 1)
         var h: CGFloat = 12 + CGFloat(n) * 38 + 19 + 8
         if state.error != nil { h += 22 }
+        if state.needsLogin && !loggingIn { h += 34 }   // bouton « Sign in »
         let spk = sparkPayload()
         if spk.count >= 3, (spk.compactMap { $0["a"] as? Double }.max() ?? 0) >= 1800 { h += 38 }
         return NSSize(width: 248, height: h)
@@ -613,6 +745,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             "time": state.fetchedAt.map { df.string(from: $0) } ?? "",
             "stale": state.stale,
             "spark": sparkPayload(),
+            "needsLogin": state.needsLogin && !loggingIn,
         ]
         if let e = state.error { payload["error"] = e }
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
@@ -733,6 +866,167 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             try? SMAppService.mainApp.register()
         }
+    }
+
+    // MARK: Login OAuth intégré
+
+    // Ouvre le navigateur sur la page d'autorisation Claude et attend le retour.
+    // Voie principale : un serveur loopback local capte la redirection (zéro
+    // copier-coller). Si le serveur ne démarre pas, on bascule sur le repli paste.
+    @objc func startLogin() {
+        if loggingIn { return }
+        let verifier = randomToken()
+        let stateTok = randomToken(16)
+        let server = OAuthLoopback()
+        guard let port = server.start() else {
+            pasteLogin(verifier: verifier, state: stateTok)   // pas de serveur → repli
+            return
+        }
+        loopback = server
+        loggingIn = true
+        let redirect = "http://127.0.0.1:\(port)/callback"
+        server.onResult = { [weak self] code, retState in
+            DispatchQueue.main.async {
+                self?.completeLogin(code: code, returnedState: retState,
+                                    verifier: verifier, expectedState: stateTok, redirect: redirect)
+            }
+        }
+        openAuthorize(redirect: redirect, state: stateTok,
+                      challenge: pkceChallenge(verifier), showCode: false)
+        // Garde-fou : si le navigateur ne revient pas (autorisation refusée, onglet
+        // fermé…), on ne reste pas bloqué en « attente ».
+        let to = DispatchWorkItem { [weak self] in self?.loginTimedOut() }
+        loginTimeout = to
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120, execute: to)
+        state.needsLogin = false
+        state.error = "Waiting for authorization in your browser…"
+        updateStatusTitle()
+        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
+    }
+
+    // Repli manuel : la page affiche un code, l'utilisateur le colle ici.
+    @objc func startPasteLogin() {
+        pasteLogin(verifier: randomToken(), state: randomToken(16))
+    }
+
+    // Construit l'URL d'autorisation OAuth (mêmes paramètres que le CLI) et l'ouvre.
+    func openAuthorize(redirect: String, state: String, challenge: String, showCode: Bool) {
+        var c = URLComponents(string: OAUTH_AUTHORIZE_URL)!
+        var items: [URLQueryItem] = [
+            .init(name: "client_id", value: OAUTH_CLIENT_ID),
+            .init(name: "response_type", value: "code"),
+            .init(name: "redirect_uri", value: redirect),
+            .init(name: "scope", value: OAUTH_SCOPES),
+            .init(name: "code_challenge", value: challenge),
+            .init(name: "code_challenge_method", value: "S256"),
+            .init(name: "state", value: state),
+        ]
+        if showCode { items.insert(.init(name: "code", value: "true"), at: 0) }
+        c.queryItems = items
+        if let url = c.url { NSWorkspace.shared.open(url) }
+    }
+
+    // Retour du serveur loopback : valide le state, échange le code, écrit le Keychain.
+    func completeLogin(code: String?, returnedState: String?,
+                       verifier: String, expectedState: String, redirect: String) {
+        loginTimeout?.cancel(); loginTimeout = nil
+        loopback?.stop(); loopback = nil
+        loggingIn = false
+        guard let code = code, !code.isEmpty else { loginFailed("Sign-in was cancelled."); return }
+        if let rs = returnedState, rs != expectedState { loginFailed("Sign-in check failed — try again."); return }
+        state.error = "Signing in…"
+        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
+        exchangeAsync(code: code, state: returnedState ?? expectedState, verifier: verifier, redirect: redirect)
+    }
+
+    // Repli copier-coller : page « console » (affiche le code) + saisie dans une alerte.
+    func pasteLogin(verifier: String, state stateTok: String) {
+        openAuthorize(redirect: OAUTH_CONSOLE_REDIRECT, state: stateTok,
+                      challenge: pkceChallenge(verifier), showCode: true)
+        let alert = NSAlert()
+        alert.messageText = "Sign in to Claude"
+        alert.informativeText = "Approve access in your browser, copy the code shown, and paste it here."
+        alert.addButton(withTitle: "Sign in")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = "Paste code here"
+        alert.accessoryView = field
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let pasted = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !pasted.isEmpty else { return }
+        // La page rend « code#state ».
+        let parts = pasted.split(separator: "#", maxSplits: 1).map(String.init)
+        let code = parts[0]
+        let retState = parts.count > 1 ? parts[1] : stateTok
+        state.error = "Signing in…"; state.needsLogin = false
+        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
+        exchangeAsync(code: code, state: retState, verifier: verifier, redirect: OAUTH_CONSOLE_REDIRECT)
+    }
+
+    // Échange code→tokens en tâche de fond, puis écrit le Keychain et rafraîchit.
+    func exchangeAsync(code: String, state: String, verifier: String, redirect: String) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = self.exchangeCode(code: code, state: state, verifier: verifier, redirect: redirect)
+            DispatchQueue.main.async {
+                if ok {
+                    self.state.needsLogin = false
+                    self.state.error = nil
+                    self.refresh(force: true)
+                } else {
+                    self.loginFailed("Sign-in failed. Please try again.")
+                }
+            }
+        }
+    }
+
+    // POST authorization_code → tokens, puis blob claudeAiOauth dans le Keychain.
+    func exchangeCode(code: String, state: String, verifier: String, redirect: String) -> Bool {
+        var req = URLRequest(url: URL(string: OAUTH_TOKEN_URL)!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(OAUTH_USER_AGENT, forHTTPHeaderField: "User-Agent")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "grant_type": "authorization_code",
+            "code": code,
+            "state": state,
+            "client_id": OAUTH_CLIENT_ID,
+            "redirect_uri": redirect,
+            "code_verifier": verifier,
+        ])
+        req.timeoutInterval = 20
+        var json: [String: Any]? = nil
+        let sem = DispatchSemaphore(value: 0)
+        urlSession.dataTask(with: req) { data, resp, _ in
+            defer { sem.signal() }
+            guard (resp as? HTTPURLResponse)?.statusCode == 200, let data = data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            json = obj
+        }.resume()
+        sem.wait()
+        guard let j = json, let access = j["access_token"] as? String else { return false }
+        var oauth: [String: Any] = ["accessToken": access]
+        if let rt = j["refresh_token"] as? String { oauth["refreshToken"] = rt }
+        if let ei = (j["expires_in"] as? NSNumber)?.doubleValue {
+            oauth["expiresAt"] = (Date().timeIntervalSince1970 + ei) * 1000
+        }
+        if let scope = j["scope"] as? String { oauth["scopes"] = scope.split(separator: " ").map(String.init) }
+        return writeCreds(account: NSUserName(), full: ["claudeAiOauth": oauth])
+    }
+
+    func loginTimedOut() {
+        guard loggingIn else { return }
+        loopback?.stop(); loopback = nil
+        loggingIn = false
+        loginFailed("Sign-in timed out. Click Sign in to try again.")
+    }
+
+    func loginFailed(_ message: String) {
+        loggingIn = false
+        state.needsLogin = true
+        state.error = message
+        updateStatusTitle()
+        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
     }
 
     // MARK: Seuils → avion
@@ -957,7 +1251,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.global(qos: .userInitiated).async {
             defer { DispatchQueue.main.async { self.fetching = false } }
             guard let creds = self.readCreds() else {
-                self.apply(limits: nil, error: "Token not found — open Claude Code, then refresh.")
+                DispatchQueue.main.async { self.state.needsLogin = true }
+                self.apply(limits: nil, error: "Not signed in to Claude.")
                 return
             }
             var token = creds.accessToken
@@ -1009,7 +1304,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if http.statusCode == 401 {
             // Le refresh automatique a lui aussi échoué → reconnexion nécessaire.
-            self.apply(limits: nil, error: "Token expired — reconnect Claude Code (/login), then refresh.")
+            DispatchQueue.main.async { self.state.needsLogin = true }
+            self.apply(limits: nil, error: "Session expired — sign in again.")
             return
         }
         guard http.statusCode == 200,
@@ -1050,6 +1346,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.state.limits = limits
                 self.state.fetchedAt = Date()
                 self.state.stale = false
+                self.state.needsLogin = false
                 self.checkThresholds(limits)
                 self.saveCachedState()
                 if let s = limits.first(where: { $0.isSession }) {
