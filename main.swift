@@ -8,7 +8,6 @@ import WebKit
 import ServiceManagement
 import CryptoKit
 import Security
-import Network
 
 // MARK: - Données
 
@@ -41,9 +40,15 @@ let OAUTH_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
 // claude.ai/oauth/authorize (qui renvoie 403 « Invalid request format ») — le login
 // a migré sur claude.com/cai. Valeurs relevées dans le binaire claude-code en prod.
 let OAUTH_AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize"
-let OAUTH_SCOPES = "org:create_api_key user:profile user:inference"
-// Callback « console » : la page affiche le code à copier (repli sans serveur local).
-let OAUTH_CONSOLE_REDIRECT = "https://console.anthropic.com/oauth/code/callback"
+// Un SEUL scope — relevé sur `claude setup-token` (le flux subscription réel).
+// Envoyer davantage (org:create_api_key…) fait rejeter la requête.
+let OAUTH_SCOPES = "user:inference"
+// Callback hébergé par Claude : la page affiche le code à copier (« code#state »).
+// C'est le redirect utilisé par `claude setup-token`, et il doit être identique
+// dans l'échange de token.
+let OAUTH_REDIRECT = "https://platform.claude.com/oauth/code/callback"
+// Endpoint d'échange/refresh de secours (si api.anthropic.com refuse le code).
+let OAUTH_TOKEN_URL_ALT = "https://platform.claude.com/v1/oauth/token"
 let OAUTH_USER_AGENT = "claude-cli/1.0 (external, cli)"
 let KEYCHAIN_SERVICE = "Claude Code-credentials"
 
@@ -67,75 +72,6 @@ func randomToken(_ n: Int = 32) -> String {
 // challenge = base64url(SHA256(verifier)) — méthode S256.
 func pkceChallenge(_ verifier: String) -> String {
     b64url(Data(SHA256.hash(data: Data(verifier.utf8))))
-}
-
-// MARK: - Serveur loopback OAuth
-
-// Petit serveur HTTP sur 127.0.0.1 (port éphémère) : reçoit la redirection OAuth
-// (`/callback?code=…&state=…`) sans que l'utilisateur ait à copier-coller quoi que
-// ce soit. C'est le même principe que le login de Claude Code.
-final class OAuthLoopback {
-    private var listener: NWListener?
-    private var connections: [NWConnection] = []
-    private var fired = false
-    var onResult: ((_ code: String?, _ state: String?) -> Void)?
-
-    // Démarre l'écoute et renvoie le port attribué, ou nil si l'ouverture échoue.
-    func start() -> UInt16? {
-        let params = NWParameters.tcp
-        params.allowLocalEndpointReuse = true
-        // On écoute sur l'interface loopback (lo0) : couvre à la fois 127.0.0.1 et
-        // ::1, donc le retour du navigateur sur `localhost:<port>` est capté quelle
-        // que soit la résolution IPv4/IPv6 — et rien n'est exposé au réseau local.
-        params.requiredInterfaceType = .loopback
-        guard let l = try? NWListener(using: params) else { return nil }
-        listener = l
-        l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
-        let sem = DispatchSemaphore(value: 0)
-        l.stateUpdateHandler = { st in
-            switch st {
-            case .ready, .failed, .cancelled: sem.signal()
-            default: break
-            }
-        }
-        l.start(queue: .global())
-        _ = sem.wait(timeout: .now() + 3)
-        return l.port?.rawValue
-    }
-
-    private func accept(_ conn: NWConnection) {
-        connections.append(conn)
-        conn.start(queue: .global())
-        conn.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, _, _ in
-            guard let self = self else { return }
-            var code: String?, state: String?
-            if let data = data, let req = String(data: data, encoding: .utf8),
-               let line = req.split(separator: "\r\n").first,
-               let path = line.split(separator: " ").dropFirst().first,
-               let comps = URLComponents(string: "http://localhost\(path)") {
-                for item in comps.queryItems ?? [] {
-                    if item.name == "code" { code = item.value }
-                    if item.name == "state" { state = item.value }
-                }
-            }
-            let ok = code != nil
-            let body = ok
-                ? "<h2>Signed in \u{2713}</h2><p>You can close this tab and return to Conso&nbsp;Claude.</p>"
-                : "<h2>Sign-in failed</h2><p>Please try again from the app.</p>"
-            let html = "<!doctype html><meta charset=utf-8><title>Conso Claude</title>" +
-                "<body style='font:16px -apple-system;text-align:center;margin-top:18vh;color:#333'>\(body)</body>"
-            let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n" +
-                "Content-Length: \(html.utf8.count)\r\nConnection: close\r\n\r\n\(html)"
-            conn.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
-            // Une seule notification : le navigateur peut ouvrir /favicon.ico en plus.
-            if ok, !self.fired { self.fired = true; self.onResult?(code, state) }
-        }
-    }
-
-    func stop() {
-        listener?.cancel(); listener = nil
-        connections.forEach { $0.cancel() }; connections.removeAll()
-    }
 }
 
 struct KeychainCreds {
@@ -589,9 +525,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var lastPercents: [String: Int] = [:]
     let thresholds = [50, 75, 90]
 
-    // Login OAuth en cours (serveur loopback + PKCE + garde-fou timeout).
-    var loopback: OAuthLoopback?
-    var loginTimeout: DispatchWorkItem?
+    // Login OAuth en cours (empêche deux flux simultanés).
     var loggingIn = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -649,16 +583,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         planeItem.target = self
         menu.addItem(planeItem)
         menu.addItem(.separator())
-        // « Sign in » ouvre le flux OAuth intégré. Alt (⌥) révèle le repli copier-coller,
-        // utile si le retour automatique par le navigateur ne se fait pas.
         let signInItem = NSMenuItem(title: "Sign in to Claude…", action: #selector(startLogin), keyEquivalent: "")
         signInItem.target = self
         menu.addItem(signInItem)
-        let pasteItem = NSMenuItem(title: "Sign in — paste code…", action: #selector(startPasteLogin), keyEquivalent: "")
-        pasteItem.target = self
-        pasteItem.isAlternate = true
-        pasteItem.keyEquivalentModifierMask = [.option]
-        menu.addItem(pasteItem)
         menu.addItem(.separator())
         let loginItem = NSMenuItem(title: "Start with macOS", action: #selector(toggleLogin), keyEquivalent: "")
         loginItem.target = self
@@ -876,132 +803,113 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Login OAuth intégré
 
-    // Ouvre le navigateur sur la page d'autorisation Claude et attend le retour.
-    // Voie principale : un serveur loopback local capte la redirection (zéro
-    // copier-coller). Si le serveur ne démarre pas, on bascule sur le repli paste.
+    // Flux calqué à l'identique sur `claude setup-token` (subscription) :
+    // 1. on ouvre le navigateur sur la page d'autorisation Claude,
+    // 2. l'utilisateur approuve → la page affiche un code (« code#state »),
+    // 3. il colle ce code, on l'échange contre un token et on écrit le Keychain.
+    // Pas de serveur loopback : le vrai flux n'en utilise pas (le redirect est un
+    // callback hébergé par Claude).
     @objc func startLogin() {
         if loggingIn { return }
+        loggingIn = true
         let verifier = randomToken()
         let stateTok = randomToken(16)
-        let server = OAuthLoopback()
-        guard let port = server.start() else {
-            pasteLogin(verifier: verifier, state: stateTok)   // pas de serveur → repli
-            return
-        }
-        loopback = server
-        loggingIn = true
-        // `localhost` (et non 127.0.0.1) : c'est la forme que le client OAuth de
-        // Claude Code déclare comme redirect autorisé.
-        let redirect = "http://localhost:\(port)/callback"
-        server.onResult = { [weak self] code, retState in
-            DispatchQueue.main.async {
-                self?.completeLogin(code: code, returnedState: retState,
-                                    verifier: verifier, expectedState: stateTok, redirect: redirect)
-            }
-        }
-        openAuthorize(redirect: redirect, state: stateTok, challenge: pkceChallenge(verifier))
-        // Garde-fou : si le navigateur ne revient pas (autorisation refusée, onglet
-        // fermé…), on ne reste pas bloqué en « attente ».
-        let to = DispatchWorkItem { [weak self] in self?.loginTimedOut() }
-        loginTimeout = to
-        DispatchQueue.main.asyncAfter(deadline: .now() + 120, execute: to)
-        state.needsLogin = false
-        state.error = "Waiting for authorization in your browser…"
-        updateStatusTitle()
-        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
-    }
+        openAuthorize(state: stateTok, challenge: pkceChallenge(verifier))
 
-    // Repli manuel : la page affiche un code, l'utilisateur le colle ici.
-    @objc func startPasteLogin() {
-        pasteLogin(verifier: randomToken(), state: randomToken(16))
-    }
-
-    // Construit l'URL d'autorisation OAuth (paramètres et ordre calqués sur le CLI
-    // Claude Code) et l'ouvre dans le navigateur. `code=true` est toujours présent,
-    // que le retour se fasse par loopback ou par copier-coller.
-    func openAuthorize(redirect: String, state: String, challenge: String) {
-        var c = URLComponents(string: OAUTH_AUTHORIZE_URL)!
-        c.queryItems = [
-            .init(name: "code", value: "true"),
-            .init(name: "client_id", value: OAUTH_CLIENT_ID),
-            .init(name: "response_type", value: "code"),
-            .init(name: "redirect_uri", value: redirect),
-            .init(name: "scope", value: OAUTH_SCOPES),
-            .init(name: "code_challenge", value: challenge),
-            .init(name: "code_challenge_method", value: "S256"),
-            .init(name: "state", value: state),
-        ]
-        if let url = c.url { NSWorkspace.shared.open(url) }
-    }
-
-    // Retour du serveur loopback : valide le state, échange le code, écrit le Keychain.
-    func completeLogin(code: String?, returnedState: String?,
-                       verifier: String, expectedState: String, redirect: String) {
-        loginTimeout?.cancel(); loginTimeout = nil
-        loopback?.stop(); loopback = nil
-        loggingIn = false
-        guard let code = code, !code.isEmpty else { loginFailed("Sign-in was cancelled."); return }
-        if let rs = returnedState, rs != expectedState { loginFailed("Sign-in check failed — try again."); return }
-        state.error = "Signing in…"
-        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
-        exchangeAsync(code: code, state: returnedState ?? expectedState, verifier: verifier, redirect: redirect)
-    }
-
-    // Repli copier-coller : page « console » (affiche le code) + saisie dans une alerte.
-    func pasteLogin(verifier: String, state stateTok: String) {
-        openAuthorize(redirect: OAUTH_CONSOLE_REDIRECT, state: stateTok,
-                      challenge: pkceChallenge(verifier))
         let alert = NSAlert()
         alert.messageText = "Sign in to Claude"
-        alert.informativeText = "Approve access in your browser, copy the code shown, and paste it here."
+        alert.informativeText = "Your browser just opened the Claude authorization page. "
+            + "Approve access, copy the code shown, and paste it here."
         alert.addButton(withTitle: "Sign in")
         alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        field.placeholderString = "Paste code here"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.placeholderString = "Paste the code here"
         alert.accessoryView = field
         NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let pasted = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !pasted.isEmpty else { return }
-        // La page rend « code#state ».
+        alert.window.initialFirstResponder = field
+        let pasted = alert.runModal() == .alertFirstButtonReturn
+            ? field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        guard !pasted.isEmpty else { loggingIn = false; return }
+
+        // La page rend le code sous la forme « code#state ».
         let parts = pasted.split(separator: "#", maxSplits: 1).map(String.init)
         let code = parts[0]
         let retState = parts.count > 1 ? parts[1] : stateTok
         state.error = "Signing in…"; state.needsLogin = false
         if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
-        exchangeAsync(code: code, state: retState, verifier: verifier, redirect: OAUTH_CONSOLE_REDIRECT)
+        exchangeAsync(code: code, state: retState, verifier: verifier)
+    }
+
+    // Construit l'URL d'autorisation OAuth et l'ouvre. On encode chaque valeur
+    // exactement comme `URLSearchParams` du CLI (`:` → %3A, `/` → %2F) pour que la
+    // requête soit byte-identique à celle de `claude setup-token` — URLComponents
+    // laisserait `:` et `/` en clair, ce qui peut faire échouer un serveur strict.
+    func openAuthorize(state: String, challenge: String) {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")               // non-réservés RFC 3986
+        func enc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s }
+        let query = [
+            "code=true",
+            "client_id=\(enc(OAUTH_CLIENT_ID))",
+            "response_type=code",
+            "redirect_uri=\(enc(OAUTH_REDIRECT))",
+            "scope=\(enc(OAUTH_SCOPES))",
+            "code_challenge=\(enc(challenge))",
+            "code_challenge_method=S256",
+            "state=\(enc(state))",
+        ].joined(separator: "&")
+        if let url = URL(string: OAUTH_AUTHORIZE_URL + "?" + query) {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     // Échange code→tokens en tâche de fond, puis écrit le Keychain et rafraîchit.
-    func exchangeAsync(code: String, state: String, verifier: String, redirect: String) {
+    func exchangeAsync(code: String, state: String, verifier: String) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let ok = self.exchangeCode(code: code, state: state, verifier: verifier, redirect: redirect)
+            let ok = self.exchangeCode(code: code, state: state, verifier: verifier)
             DispatchQueue.main.async {
+                self.loggingIn = false
                 if ok {
                     self.state.needsLogin = false
                     self.state.error = nil
                     self.refresh(force: true)
                 } else {
-                    self.loginFailed("Sign-in failed. Please try again.")
+                    self.loginFailed("Sign-in failed — check the code and try again.")
                 }
             }
         }
     }
 
-    // POST authorization_code → tokens, puis blob claudeAiOauth dans le Keychain.
-    func exchangeCode(code: String, state: String, verifier: String, redirect: String) -> Bool {
-        var req = URLRequest(url: URL(string: OAUTH_TOKEN_URL)!)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(OAUTH_USER_AGENT, forHTTPHeaderField: "User-Agent")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+    // POST authorization_code → tokens (essaie les deux endpoints connus), puis
+    // écrit le blob claudeAiOauth dans le Keychain.
+    func exchangeCode(code: String, state: String, verifier: String) -> Bool {
+        let body = try? JSONSerialization.data(withJSONObject: [
             "grant_type": "authorization_code",
             "code": code,
             "state": state,
             "client_id": OAUTH_CLIENT_ID,
-            "redirect_uri": redirect,
+            "redirect_uri": OAUTH_REDIRECT,
             "code_verifier": verifier,
         ])
+        let j = postToken(body: body, url: OAUTH_TOKEN_URL)
+             ?? postToken(body: body, url: OAUTH_TOKEN_URL_ALT)
+        guard let j = j, let access = j["access_token"] as? String else { return false }
+        var oauth: [String: Any] = ["accessToken": access]
+        if let rt = j["refresh_token"] as? String { oauth["refreshToken"] = rt }
+        if let ei = (j["expires_in"] as? NSNumber)?.doubleValue {
+            oauth["expiresAt"] = (Date().timeIntervalSince1970 + ei) * 1000
+        }
+        if let scope = j["scope"] as? String { oauth["scopes"] = scope.split(separator: " ").map(String.init) }
+        return writeCreds(account: NSUserName(), full: ["claudeAiOauth": oauth])
+    }
+
+    // POST JSON synchrone vers un endpoint de token ; renvoie le JSON sur 200, sinon nil.
+    func postToken(body: Data?, url: String) -> [String: Any]? {
+        var req = URLRequest(url: URL(string: url)!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(OAUTH_USER_AGENT, forHTTPHeaderField: "User-Agent")
+        req.httpBody = body
         req.timeoutInterval = 20
         var json: [String: Any]? = nil
         let sem = DispatchSemaphore(value: 0)
@@ -1012,21 +920,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             json = obj
         }.resume()
         sem.wait()
-        guard let j = json, let access = j["access_token"] as? String else { return false }
-        var oauth: [String: Any] = ["accessToken": access]
-        if let rt = j["refresh_token"] as? String { oauth["refreshToken"] = rt }
-        if let ei = (j["expires_in"] as? NSNumber)?.doubleValue {
-            oauth["expiresAt"] = (Date().timeIntervalSince1970 + ei) * 1000
-        }
-        if let scope = j["scope"] as? String { oauth["scopes"] = scope.split(separator: " ").map(String.init) }
-        return writeCreds(account: NSUserName(), full: ["claudeAiOauth": oauth])
-    }
-
-    func loginTimedOut() {
-        guard loggingIn else { return }
-        loopback?.stop(); loopback = nil
-        loggingIn = false
-        loginFailed("Sign-in timed out. Click Sign in to try again.")
+        return json
     }
 
     func loginFailed(_ message: String) {
