@@ -378,9 +378,13 @@ final class WebPopover: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
             }
             glass.cornerRadius = 16
             // Masque arrondi sur la web view : coupe son bord rectangulaire (le
-            // « cadre fantôme » qu'on devinait aux coins).
+            // « cadre fantôme » qu'on devinait aux coins). IMPORTANT : le verre
+            // arrondit en « squircle » (cornerCurve continu, style Apple) ; sans
+            // aligner la web view dessus, son coin circulaire dépasse le verre au
+            // coin haut-gauche → petit artefact carré. On force donc .continuous.
             webView.wantsLayer = true
             webView.layer?.cornerRadius = 16
+            webView.layer?.cornerCurve = .continuous
             webView.layer?.masksToBounds = true
             webView.autoresizingMask = [.width, .height]
             webView.frame = glass.bounds

@@ -2,6 +2,15 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.3.6 — 2026-07-21
+
+### Coin haut-gauche du popover enfin arrondi
+- Le verre (NSGlassEffectView) arrondit ses coins en « squircle » (cornerCurve
+  continu, style Apple), mais la web view masquait avec un `cornerRadius`
+  **circulaire** par défaut → son coin dépassait le verre en haut-gauche, d'où le
+  petit artefact carré (« cadre fantôme »). Corrigé en passant la web view en
+  `cornerCurve = .continuous` : les deux coins coïncident, popover propre.
+
 ## 1.3.5 — 2026-07-21
 
 ### Numéro de version visible + constat sur le login
