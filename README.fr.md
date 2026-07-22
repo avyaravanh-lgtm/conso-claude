@@ -34,26 +34,31 @@ banderole, partagé avec l'outil d'aperçu du scratchpad), `phrases.json`
 ./build.sh --zip        # build + crée "Conso Claude.zip" à partager
 ```
 
-## Distribuer à des collègues
+## Distribuer (par les sources)
 
-1. `./build.sh --zip` → envoyer **Conso Claude.zip**.
-2. Côté collègue :
-   - **Prérequis : un abonnement Claude Pro/Max.** Pas besoin de Claude Code ni
-     du Terminal — l'app sait se connecter toute seule.
-   - Dézipper, glisser `Conso Claude.app` dans `/Applications`.
-   - Premier lancement : l'app n'est pas notarisée → macOS la bloque (« logiciel
-     malveillant »). Cliquer **« Terminer »** (pas « Placer dans la corbeille »),
-     puis Réglages Système → Confidentialité et sécurité → tout en bas,
-     **« Ouvrir quand même »**. Une seule fois. (Le clic droit → Ouvrir ne
-     suffit plus depuis macOS 15. Alternative terminal :
-     `xattr -d com.apple.quarantine "/Applications/Conso Claude.app"`.)
-   - Cliquer sur l'icône ✳ → **Sign in to Claude** : le navigateur s'ouvre, on
-     autorise, c'est fini — le token est écrit dans le trousseau tout seul. (Si
-     Claude Code est déjà connecté, l'app réutilise son token, rien à faire.)
-3. Pour une diffusion large sans friction : compte Apple Developer (99 $/an)
-   + `codesign` Developer ID + notarisation. Pas nécessaire entre collègues.
+Cette app est un **compagnon de Claude Code** : elle lit le token OAuth que
+Claude Code range dans le trousseau et affiche ta conso. Donc le prérequis
+côté utilisateur, c'est **avoir Claude Code installé et connecté** (`claude`,
+puis `/login`) — ça met un token qui marche dans le trousseau, que l'app lit.
+Plus un abonnement **Pro/Max**.
 
-Binaire universel : tourne sur Apple Silicon et Intel. macOS 15 minimum.
+On distribue **le code source**, pas un `.zip` : une app **compilée en local
+n'est jamais mise en quarantaine** → aucun blocage Gatekeeper, aucune
+notarisation, aucun « Ouvrir quand même ».
+
+```bash
+xcode-select --install    # une fois, si les Command Line Tools manquent
+git clone https://github.com/avyaravanh-lgtm/conso-claude.git
+cd conso-claude
+./build.sh --install      # binaire universel (Apple Silicon + Intel) → /Applications
+```
+
+Binaire universel : Apple Silicon et Intel, macOS 15 minimum.
+
+> **Pas de Claude Code ?** Le menu a un bouton « Sign in to Claude » qui lance
+> l'OAuth lui-même, mais l'étape d'autorisation finale peut échouer sur
+> certains comptes/machines — et ça, c'est côté Anthropic, hors de notre
+> contrôle. Le chemin fiable : avoir Claude Code connecté, l'app fait le reste.
 
 ## Comment ça marche
 
@@ -83,7 +88,7 @@ Binaire universel : tourne sur Apple Silicon et Intel. macOS 15 minimum.
 
 ## Si `✳ !` ou « Not signed in »
 
-Cliquer sur l'icône ✳ → **Sign in to Claude** (le navigateur s'ouvre, on autorise).
-Si le token existait déjà, un simple clic droit → Refresh suffit. Astuce : maintenir
-**⌥** sur le menu affiche un repli « coller le code » au cas où le navigateur ne
-revienne pas tout seul.
+Vérifie que **Claude Code est connecté sur ce Mac** (`claude`, puis `/login`) :
+ça écrit le token dans le trousseau, puis clic droit sur ✳ → **Refresh**. Le
+bouton « Sign in to Claude » du menu existe aussi, mais le chemin fiable reste
+le token de Claude Code.
