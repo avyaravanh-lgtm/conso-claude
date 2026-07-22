@@ -27,27 +27,28 @@ When you cross **50%, 75% and 90%** of a limit, a small coral prop plane flies a
   <img src="assets/banner-preview.png" width="560" alt="The three banner tiers: 50% coral, 25% orange, 10% red">
 </p>
 
-> Weekend project, shared as-is. **Windows** port: [`windows/`](windows/README.md).
+> Weekend project, shared as-is — distributed as source (build it yourself, see below). **Windows** port: [`windows/`](windows/README.md).
 
-## Install
+## Install (build from source)
 
-**Requirements:** macOS 15+ and a **Pro/Max Claude subscription**. You don't need Claude Code or the Terminal — the app can sign you in itself. (API-key setups — `ANTHROPIC_API_KEY`, Bedrock/Vertex — have no usage limits to show.)
+This app is a **companion to [Claude Code](https://claude.com/claude-code)**: it reads the OAuth token Claude Code stores in your Keychain and shows your usage. So the requirements are:
 
-1. Download `Conso Claude.zip` from [Releases](../../releases), unzip, drag to `/Applications`.
-2. First launch: the app is not notarized, so macOS blocks it — click **"Done"** (not "Move to Trash"), then open **System Settings → Privacy & Security**, scroll down to *"Conso Claude was blocked…"* and click **"Open Anyway"**. One time only.
-   *Terminal alternative:* `xattr -d com.apple.quarantine "/Applications/Conso Claude.app"`
-3. Click the ✳ icon → **Sign in to Claude**. Your browser opens, you approve access, and you're done — the token lands in the Keychain automatically. (Already using Claude Code? The app reuses its existing token, so there's nothing to sign in to.)
-4. Right-click the ✳ icon → "Start with macOS" to make it permanent.
+- macOS 15+, on Apple Silicon or Intel
+- a **Pro/Max Claude subscription**
+- **Claude Code installed and signed in** — run `claude` once and sign in with `/login`. That puts a working token in your Keychain, which this app reads. *(API-key setups — `ANTHROPIC_API_KEY`, Bedrock/Vertex — have no usage limits to show.)*
 
-## Build from source
-
-No dependencies, no Xcode project — just `swiftc` (Xcode Command Line Tools):
+Build it yourself — no dependencies, no Xcode project, just `swiftc`. A **locally-built app is never quarantined**, so there's no Gatekeeper prompt and no notarization needed:
 
 ```bash
+xcode-select --install    # once, if you don't have the Command Line Tools
 git clone https://github.com/avyaravanh-lgtm/conso-claude.git
 cd conso-claude
-./build.sh --install   # universal binary (Apple Silicon + Intel) → /Applications
+./build.sh --install      # universal binary (Apple Silicon + Intel) → /Applications, then launches
 ```
+
+Right-click the ✳ icon → "Start with macOS" to make it permanent.
+
+> **No Claude Code?** The menu has a "Sign in to Claude" button that runs the OAuth flow itself, but Anthropic's final authorization step can fail on some accounts/machines — and that's on Anthropic's side, outside this app's control. The reliable path is simply to have Claude Code signed in; then this app just works.
 
 ## How it works
 
@@ -75,8 +76,8 @@ Drop a `phrases.json` in `~/Library/Application Support/Conso Claude/` to extend
 ## Caveats
 
 - The usage endpoint is not officially documented; if Anthropic changes it, the app shows a friendly error until updated.
-- Not notarized (no Apple Developer account) — hence the "Open Anyway" dance in System Settings.
-- If the menu bar shows `✳ !`: click the icon → **Sign in to Claude** (or, if you already had a token, right-click → Refresh). Hold **⌥** on the menu for a paste-the-code fallback if your browser doesn't return automatically.
+- Distributed as source, not as a notarized download — building it locally is what keeps it out of Gatekeeper's way (no Apple Developer account needed).
+- If the menu bar shows `✳ !` or "Not signed in": make sure Claude Code is signed in on this Mac (`claude` → `/login`), then right-click the icon → **Refresh**. The in-app "Sign in to Claude" button exists too, but the reliable path is the Claude Code token.
 
 ---
 

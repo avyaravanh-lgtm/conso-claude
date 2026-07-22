@@ -8,6 +8,7 @@ import WebKit
 import ServiceManagement
 import CryptoKit
 import Security
+import Network
 
 // MARK: - Données
 
@@ -40,13 +41,17 @@ let OAUTH_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
 // claude.ai/oauth/authorize (qui renvoie 403 « Invalid request format ») — le login
 // a migré sur claude.com/cai. Valeurs relevées dans le binaire claude-code en prod.
 let OAUTH_AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize"
-// Un SEUL scope — relevé sur `claude setup-token` (le flux subscription réel).
-// Envoyer davantage (org:create_api_key…) fait rejeter la requête.
-let OAUTH_SCOPES = "user:inference"
-// Callback hébergé par Claude : la page affiche le code à copier (« code#state »).
-// C'est le redirect utilisé par `claude setup-token`, et il doit être identique
-// dans l'échange de token.
-let OAUTH_REDIRECT = "https://platform.claude.com/oauth/code/callback"
+// Scopes du VRAI login interactif `/login` (relevés dans le binaire claude-code :
+// jeu de scopes « Khi »). C'est ce flux (loopback local, browser → localhost) qui
+// fonctionne de façon fiable — pas le copier-coller `setup-token` (scope unique
+// `user:inference`), qui rendait « Invalid request format » côté serveur.
+let OAUTH_SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+// Redirect du flux loopback : le navigateur revient sur http://localhost:<port>/callback
+// (interface loopback uniquement). Le redirect DOIT être identique dans l'échange
+// de token — on le passe donc explicitement partout (openAuthorize / exchangeCode).
+// Repli copier-coller si le serveur loopback ne démarre pas : callback hébergé par
+// Claude qui affiche le code (« code#state »).
+let OAUTH_REDIRECT_MANUAL = "https://platform.claude.com/oauth/code/callback"
 // Endpoint d'échange/refresh de secours (si api.anthropic.com refuse le code).
 let OAUTH_TOKEN_URL_ALT = "https://platform.claude.com/v1/oauth/token"
 let OAUTH_USER_AGENT = "claude-cli/1.0 (external, cli)"
@@ -72,6 +77,76 @@ func randomToken(_ n: Int = 32) -> String {
 // challenge = base64url(SHA256(verifier)) — méthode S256.
 func pkceChallenge(_ verifier: String) -> String {
     b64url(Data(SHA256.hash(data: Data(verifier.utf8))))
+}
+
+// MARK: - Serveur loopback OAuth
+
+// Petit serveur HTTP sur l'interface loopback (port éphémère) : reçoit la
+// redirection OAuth (`/callback?code=…&state=…`) sans copier-coller. C'est le même
+// principe que le login interactif de Claude Code (`/login`) — le navigateur revient
+// tout seul sur http://localhost:<port>/callback.
+final class OAuthLoopback {
+    private var listener: NWListener?
+    private var connections: [NWConnection] = []
+    private var fired = false
+    var onResult: ((_ code: String?, _ state: String?) -> Void)?
+
+    // Démarre l'écoute et renvoie le port attribué, ou nil si l'ouverture échoue.
+    func start() -> UInt16? {
+        let params = NWParameters.tcp
+        params.allowLocalEndpointReuse = true
+        // Interface loopback (lo0) : couvre 127.0.0.1 et ::1, donc le retour du
+        // navigateur sur `localhost:<port>` est capté quelle que soit la résolution
+        // IPv4/IPv6 — et rien n'est exposé au réseau local.
+        params.requiredInterfaceType = .loopback
+        guard let l = try? NWListener(using: params) else { return nil }
+        listener = l
+        l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
+        let sem = DispatchSemaphore(value: 0)
+        l.stateUpdateHandler = { st in
+            switch st {
+            case .ready, .failed, .cancelled: sem.signal()
+            default: break
+            }
+        }
+        l.start(queue: .global())
+        _ = sem.wait(timeout: .now() + 3)
+        return l.port?.rawValue
+    }
+
+    private func accept(_ conn: NWConnection) {
+        connections.append(conn)
+        conn.start(queue: .global())
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, _, _ in
+            guard let self = self else { return }
+            var code: String?, state: String?
+            if let data = data, let req = String(data: data, encoding: .utf8),
+               let line = req.split(separator: "\r\n").first,
+               let path = line.split(separator: " ").dropFirst().first,
+               let comps = URLComponents(string: "http://localhost\(path)") {
+                for item in comps.queryItems ?? [] {
+                    if item.name == "code" { code = item.value }
+                    if item.name == "state" { state = item.value }
+                }
+            }
+            let ok = code != nil
+            let body = ok
+                ? "<h2>Signed in \u{2713}</h2><p>You can close this tab and return to Conso&nbsp;Claude.</p>"
+                : "<h2>Sign-in failed</h2><p>Please try again from the app.</p>"
+            let html = "<!doctype html><meta charset=utf-8><title>Conso Claude</title>" +
+                "<body style='font:16px -apple-system;text-align:center;margin-top:18vh;color:#333'>\(body)</body>"
+            let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n" +
+                "Content-Length: \(html.utf8.count)\r\nConnection: close\r\n\r\n\(html)"
+            conn.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
+            // Une seule notification : le navigateur peut ouvrir /favicon.ico en plus.
+            if ok, !self.fired { self.fired = true; self.onResult?(code, state) }
+        }
+    }
+
+    func stop() {
+        listener?.cancel(); listener = nil
+        connections.forEach { $0.cancel() }; connections.removeAll()
+    }
 }
 
 struct KeychainCreds {
@@ -523,6 +598,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Login OAuth en cours (empêche deux flux simultanés).
     var loggingIn = false
+    // Serveur loopback + garde-fou timeout du login en cours.
+    var loopback: OAuthLoopback?
+    var loginTimeout: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -805,12 +883,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Login OAuth intégré
 
-    // Flux calqué à l'identique sur `claude setup-token` (subscription) :
-    // 1. on ouvre le navigateur sur la page d'autorisation Claude,
-    // 2. l'utilisateur approuve → la page affiche un code (« code#state »),
-    // 3. il colle ce code, on l'échange contre un token et on écrit le Keychain.
-    // Pas de serveur loopback : le vrai flux n'en utilise pas (le redirect est un
-    // callback hébergé par Claude).
+    // Flux calqué sur le VRAI login interactif de Claude Code (`/login`) :
+    // 1. on démarre un serveur loopback local (127.0.0.1:<port éphémère>),
+    // 2. on ouvre le navigateur sur la page d'autorisation Claude avec
+    //    redirect_uri = http://localhost:<port>/callback et les scopes complets,
+    // 3. l'utilisateur approuve → le navigateur revient TOUT SEUL sur le loopback,
+    //    on récupère le code, on l'échange et on écrit le Keychain.
+    // Aucun copier-coller. Repli automatique sur la saisie manuelle si le serveur
+    // loopback ne peut pas démarrer.
     @objc func startLogin() {
         if loggingIn { return }
         // Garde-fou : si un token est déjà en place (Claude Code connecté sur cette
@@ -827,11 +907,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate(ignoringOtherApps: true)
             guard warn.runModal() == .alertSecondButtonReturn else { return }
         }
-        loggingIn = true
         let verifier = randomToken()
         let stateTok = randomToken(16)
-        openAuthorize(state: stateTok, challenge: pkceChallenge(verifier))
+        // Voie principale : serveur loopback (zéro copier-coller). S'il ne démarre
+        // pas (rare), on bascule sur le repli manuel.
+        let server = OAuthLoopback()
+        guard let port = server.start() else {
+            pasteLogin(verifier: verifier, state: stateTok)
+            return
+        }
+        loopback = server
+        loggingIn = true
+        // `localhost` (et non 127.0.0.1) : forme que le client OAuth de Claude Code
+        // déclare comme redirect autorisé (loopback RFC 8252, n'importe quel port).
+        let redirect = "http://localhost:\(port)/callback"
+        server.onResult = { [weak self] code, retState in
+            DispatchQueue.main.async {
+                self?.completeLogin(code: code, returnedState: retState,
+                                    verifier: verifier, expectedState: stateTok, redirect: redirect)
+            }
+        }
+        openAuthorize(redirect: redirect, state: stateTok, challenge: pkceChallenge(verifier))
+        // Garde-fou : si le navigateur ne revient jamais (refus, onglet fermé…), on
+        // ne reste pas bloqué en « attente ».
+        let to = DispatchWorkItem { [weak self] in self?.loginTimedOut() }
+        loginTimeout = to
+        DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: to)
+        state.needsLogin = false
+        state.error = "Waiting for authorization in your browser…"
+        updateStatusTitle()
+        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
+    }
 
+    // Repli manuel : le redirect est le callback hébergé par Claude, qui affiche le
+    // code (« code#state ») ; l'utilisateur le colle ici.
+    func pasteLogin(verifier: String, state stateTok: String) {
+        loggingIn = true
+        openAuthorize(redirect: OAUTH_REDIRECT_MANUAL, state: stateTok, challenge: pkceChallenge(verifier))
         let alert = NSAlert()
         alert.messageText = "Sign in to Claude"
         alert.informativeText = "Your browser just opened the Claude authorization page. "
@@ -853,14 +965,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let retState = parts.count > 1 ? parts[1] : stateTok
         state.error = "Signing in…"; state.needsLogin = false
         if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
-        exchangeAsync(code: code, state: retState, verifier: verifier)
+        exchangeAsync(code: code, state: retState, verifier: verifier, redirect: OAUTH_REDIRECT_MANUAL)
+    }
+
+    // Retour du serveur loopback : valide le state, échange le code, écrit le Keychain.
+    func completeLogin(code: String?, returnedState: String?,
+                       verifier: String, expectedState: String, redirect: String) {
+        loginTimeout?.cancel(); loginTimeout = nil
+        loopback?.stop(); loopback = nil
+        guard let code = code, !code.isEmpty else { loginFailed("Sign-in was cancelled."); return }
+        if let rs = returnedState, rs != expectedState { loginFailed("Sign-in check failed — try again."); return }
+        state.error = "Signing in…"
+        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
+        exchangeAsync(code: code, state: returnedState ?? expectedState, verifier: verifier, redirect: redirect)
+    }
+
+    // Le navigateur n'est jamais revenu : on abandonne proprement.
+    func loginTimedOut() {
+        loopback?.stop(); loopback = nil
+        loginTimeout = nil
+        loginFailed("Sign-in timed out — no response from the browser.")
     }
 
     // Construit l'URL d'autorisation OAuth et l'ouvre. On encode chaque valeur
-    // exactement comme `URLSearchParams` du CLI (`:` → %3A, `/` → %2F) pour que la
-    // requête soit byte-identique à celle de `claude setup-token` — URLComponents
+    // exactement comme `URLSearchParams` du CLI (`:` → %3A, `/` → %2F) — URLComponents
     // laisserait `:` et `/` en clair, ce qui peut faire échouer un serveur strict.
-    func openAuthorize(state: String, challenge: String) {
+    func openAuthorize(redirect: String, state: String, challenge: String) {
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-._~")               // non-réservés RFC 3986
         func enc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s }
@@ -868,7 +998,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             "code=true",
             "client_id=\(enc(OAUTH_CLIENT_ID))",
             "response_type=code",
-            "redirect_uri=\(enc(OAUTH_REDIRECT))",
+            "redirect_uri=\(enc(redirect))",
             "scope=\(enc(OAUTH_SCOPES))",
             "code_challenge=\(enc(challenge))",
             "code_challenge_method=S256",
@@ -880,9 +1010,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // Échange code→tokens en tâche de fond, puis écrit le Keychain et rafraîchit.
-    func exchangeAsync(code: String, state: String, verifier: String) {
+    func exchangeAsync(code: String, state: String, verifier: String, redirect: String) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let ok = self.exchangeCode(code: code, state: state, verifier: verifier)
+            let ok = self.exchangeCode(code: code, state: state, verifier: verifier, redirect: redirect)
             DispatchQueue.main.async {
                 self.loggingIn = false
                 if ok {
@@ -898,13 +1028,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // POST authorization_code → tokens (essaie les deux endpoints connus), puis
     // écrit le blob claudeAiOauth dans le Keychain.
-    func exchangeCode(code: String, state: String, verifier: String) -> Bool {
+    func exchangeCode(code: String, state: String, verifier: String, redirect: String) -> Bool {
+        // Le redirect_uri de l'échange DOIT être identique à celui de l'autorisation
+        // (loopback localhost, ou callback hébergé pour le repli manuel).
         let body = try? JSONSerialization.data(withJSONObject: [
             "grant_type": "authorization_code",
             "code": code,
             "state": state,
             "client_id": OAUTH_CLIENT_ID,
-            "redirect_uri": OAUTH_REDIRECT,
+            "redirect_uri": redirect,
             "code_verifier": verifier,
         ])
         let j = postToken(body: body, url: OAUTH_TOKEN_URL)

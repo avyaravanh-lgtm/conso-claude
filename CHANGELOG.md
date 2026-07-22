@@ -2,6 +2,29 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.4.0 — 2026-07-22
+
+### Login intégré refait sur le flux `/login` (loopback) + doc distribution honnête
+Enquête menée jusqu'au bout en extrayant la config OAuth de prod du binaire
+`claude-code` v2.1.216 (`client_id 9d1c250a…`, `claude.com/cai/oauth/authorize`,
+redirect loopback `http://localhost:<port>/callback`, scopes « Khi »). **Verdict :
+la requête de l'app est identique à celle de l'outil officiel `claude`.** Le
+« Invalid request format » survient **après le clic « Autoriser »**, côté serveur
+Anthropic — reproduit avec une URL d'autorisation officielle, page de consentement
+affichée puis refus à l'approbation. **Ce n'est donc pas réparable dans l'app** : le
+login neuf dépend d'une étape d'autorisation qu'on ne contrôle pas.
+
+Ce que cette version change quand même :
+- **Login intégré aligné sur le vrai `/login`** : serveur loopback local
+  (127.0.0.1, port éphémère, interface loopback uniquement) → le navigateur revient
+  tout seul, plus de copier-coller ; scopes complets « Khi » ; `redirect_uri`
+  identique entre autorisation et échange ; repli manuel + timeout 180 s.
+- **Chemin fiable assumé = lire le token Claude Code du trousseau.** Quiconque a
+  Claude Code connecté n'a pas besoin du bouton « Sign in ».
+- **README (FR/EN) refaits** : app positionnée en **compagnon de Claude Code**,
+  distribution **par les sources** (`git clone` + `./build.sh` → app compilée en
+  local, jamais mise en quarantaine, donc zéro Gatekeeper, zéro notarisation).
+
 ## 1.3.6 — 2026-07-21
 
 ### Coin haut-gauche du popover : fond opaque, fini le glint
