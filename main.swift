@@ -896,16 +896,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Garde-fou : si un token est déjà en place (Claude Code connecté sur cette
         // machine), se reconnecter l'écraserait par un token à scope plus étroit.
         // On confirme d'abord — inutile et risqué de le faire pour rien.
-        if readCreds() != nil {
-            let warn = NSAlert()
-            warn.messageText = "Already signed in"
-            warn.informativeText = "This Mac already has a Claude token (from Claude Code). "
-                + "You don't need to sign in here — the usage shows automatically. "
-                + "Signing in again would replace that token. Continue anyway?"
-            warn.addButton(withTitle: "Cancel")
-            warn.addButton(withTitle: "Sign in anyway")
-            NSApp.activate(ignoringOtherApps: true)
-            guard warn.runModal() == .alertSecondButtonReturn else { return }
+        // On n'avertit que s'il existe un token VIVANT à protéger. Un token expiré dont
+        // le refresh a échoué ne vaut plus rien : se reconnecter est exactement ce qu'il
+        // faut faire — inutile de faire peur avec « ça va remplacer votre token ».
+        if let creds = readCreds() {
+            let nowMs = Date().timeIntervalSince1970 * 1000
+            let expired = creds.expiresAtMs.map { nowMs >= $0 - 60_000 } ?? false
+            if !expired {
+                let warn = NSAlert()
+                warn.messageText = "Already signed in"
+                warn.informativeText = "This Mac already has a Claude token (from Claude Code). "
+                    + "You don't need to sign in here — the usage shows automatically. "
+                    + "Signing in again would replace that token. Continue anyway?"
+                warn.addButton(withTitle: "Cancel")
+                warn.addButton(withTitle: "Sign in anyway")
+                NSApp.activate(ignoringOtherApps: true)
+                guard warn.runModal() == .alertSecondButtonReturn else { return }
+            }
         }
         let verifier = randomToken()
         let stateTok = randomToken(16)
@@ -957,7 +964,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         alert.window.initialFirstResponder = field
         let pasted = alert.runModal() == .alertFirstButtonReturn
             ? field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) : ""
-        guard !pasted.isEmpty else { loggingIn = false; return }
+        // Annulé / fenêtre fermée : on re-dérive l'état réel. Le token en Keychain est
+        // peut-être mort → le bouton « Sign in » doit RESTER, pas disparaître en silence.
+        guard !pasted.isEmpty else { loggingIn = false; refresh(force: true); return }
 
         // La page rend le code sous la forme « code#state ».
         let parts = pasted.split(separator: "#", maxSplits: 1).map(String.init)
@@ -1080,6 +1089,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // (ex. sur la machine où Claude Code est connecté). Un refresh re-dérive
         // l'état réel — bouton « Sign in » seulement s'il n'y a vraiment pas de token.
         refresh(force: true)
+    }
+
+    // Le token en Keychain ne vaut plus rien : absent, expiré avec un refresh impossible,
+    // ou rejeté par l'API (401/403). On le dit franchement — bouton « Sign in » — ET on
+    // EFFACE les chiffres périmés (mémoire + cache disque). Sans ce nettoyage, le menu bar
+    // continuait d'afficher une conso fausse et l'utilisateur n'était jamais renvoyé vers
+    // la reconnexion : exactement le blocage constaté.
+    func signedOut(reason: String) {
+        DispatchQueue.main.async {
+            self.state.needsLogin = true
+            self.state.limits = []
+            self.state.stale = false
+            self.state.fetchedAt = nil
+            self.state.error = reason
+            UserDefaults.standard.removeObject(forKey: "limits")
+            UserDefaults.standard.removeObject(forKey: "fetchedAt")
+            self.updateStatusTitle()
+            if self.panel.isVisible { self.pushToWeb(animate: false); self.repositionPanel() }
+        }
     }
 
     // MARK: Seuils → avion
@@ -1304,20 +1332,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.global(qos: .userInitiated).async {
             defer { DispatchQueue.main.async { self.fetching = false } }
             guard let creds = self.readCreds() else {
-                DispatchQueue.main.async { self.state.needsLogin = true }
-                self.apply(limits: nil, error: "Not signed in to Claude.")
+                self.signedOut(reason: "Not signed in to Claude.")
                 return
             }
-            // Un token lisible existe → on n'a JAMAIS besoin de « Sign in » (on sait
-            // le rafraîchir nous-mêmes). On lève tout de suite un éventuel needsLogin
-            // resté collé après un essai de login manuel raté.
-            DispatchQueue.main.async { self.state.needsLogin = false }
+            // ⚠️ On ne suppose PAS qu'un blob présent = connecté : un token peut être
+            // expiré avec un refreshToken mort (révoqué, autre session). `needsLogin`
+            // n'est levé que sur un vrai 200 (voir apply) ou effacé par signedOut ; ici
+            // on se contente de dériver l'état réel.
             var token = creds.accessToken
             var didRefresh = false
-            // Proactif : token déjà expiré (ou dans < 1 min) → on le renouvelle nous-mêmes.
+            // Token déjà expiré (ou dans < 1 min) → on tente de le renouveler nous-mêmes.
+            // Si le refresh échoue, le token en Keychain est mort : reconnexion directe,
+            // pas de requête vouée au 401 qui laisserait des chiffres périmés à l'écran.
             let nowMs = Date().timeIntervalSince1970 * 1000
-            if let exp = creds.expiresAtMs, nowMs >= exp - 60_000,
-               let fresh = self.refreshOAuthToken() {
+            let expired = creds.expiresAtMs.map { nowMs >= $0 - 60_000 } ?? false
+            if expired {
+                guard let fresh = self.refreshOAuthToken() else {
+                    self.signedOut(reason: "Session expired — sign in again.")
+                    return
+                }
                 token = fresh
                 didRefresh = true
             }
@@ -1359,10 +1392,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
-        if http.statusCode == 401 {
-            // Le refresh automatique a lui aussi échoué → reconnexion nécessaire.
-            DispatchQueue.main.async { self.state.needsLogin = true }
-            self.apply(limits: nil, error: "Session expired — sign in again.")
+        if http.statusCode == 401 || http.statusCode == 403 {
+            // Token rejeté (expiré/révoqué) et le refresh a lui aussi échoué → reconnexion.
+            // signedOut EFFACE les chiffres périmés : les garder afficherait une conso
+            // fausse et masquerait le besoin de re-login (le 403 tombait avant dans le cas
+            // générique « HTTP 403 », qui gardait le cache et ne reproposait jamais Sign in).
+            self.signedOut(reason: "Session expired — sign in again.")
             return
         }
         guard http.statusCode == 200,
