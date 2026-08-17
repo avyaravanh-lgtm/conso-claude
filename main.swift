@@ -57,6 +57,37 @@ let OAUTH_TOKEN_URL_ALT = "https://platform.claude.com/v1/oauth/token"
 let OAUTH_USER_AGENT = "claude-cli/1.0 (external, cli)"
 let KEYCHAIN_SERVICE = "Claude Code-credentials"
 
+// Journal du flux de login OAuth — ÉVÉNEMENTS uniquement, JAMAIS de secret : aucun
+// token, code, verifier ni refreshToken n'y entre (on n'y met que des statuts, ports,
+// hôtes et raisons d'erreur). But : diagnostiquer un échec de reconnexion sur le VRAI
+// bundle, où stdout n'existe pas. Écrit dans
+// ~/Library/Application Support/Conso Claude/oauth.log, borné à ~64 KB (retroncage par
+// la fin, on garde l'historique récent).
+let oauthLogURL: URL? = {
+    let fm = FileManager.default
+    guard let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+    let dir = base.appendingPathComponent("Conso Claude", isDirectory: true)
+    try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir.appendingPathComponent("oauth.log")
+}()
+let oauthLogQueue = DispatchQueue(label: "conso.oauthlog")
+let oauthLogStamp: DateFormatter = {
+    let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"; return f
+}()
+func oauthLog(_ message: String) {
+    guard let url = oauthLogURL else { return }
+    let when = Date()
+    // Tout se passe sur une file série : DateFormatter et le fichier n'y sont jamais
+    // touchés en concurrence, quel que soit le thread appelant.
+    oauthLogQueue.async {
+        let line = "[\(oauthLogStamp.string(from: when))] \(message)\n"
+        var text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        text += line
+        if text.utf8.count > 64_000 { text = "…\n" + String(text.suffix(40_000)) }
+        try? text.write(to: url, atomically: true, encoding: .utf8)
+    }
+}
+
 // MARK: - PKCE
 
 // base64url sans padding — encodage attendu par le challenge PKCE et le state.
@@ -89,29 +120,52 @@ final class OAuthLoopback {
     private var listener: NWListener?
     private var connections: [NWConnection] = []
     private var fired = false
+    private var settled = false               // le port n'est livré qu'une seule fois
+    private(set) var lastStartError: String?  // raison lisible d'un échec (→ journal)
     var onResult: ((_ code: String?, _ state: String?) -> Void)?
 
-    // Démarre l'écoute et renvoie le port attribué, ou nil si l'ouverture échoue.
-    func start() -> UInt16? {
+    // Démarre l'écoute et livre le port par `completion` (sur le main thread) quand le
+    // listener passe .ready — ou nil (+ lastStartError renseigné) sur échec / attente
+    // trop longue. NON BLOQUANT : l'ancien `sem.wait(3s)` sur le main thread coupait un
+    // .ready qui arrivait tard (ex. autorisation système en .waiting). Le filet à 10 s
+    // ne bloque personne : il abandonne proprement.
+    func start(completion: @escaping (UInt16?) -> Void) {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
         // Interface loopback (lo0) : couvre 127.0.0.1 et ::1, donc le retour du
         // navigateur sur `localhost:<port>` est capté quelle que soit la résolution
         // IPv4/IPv6 — et rien n'est exposé au réseau local.
         params.requiredInterfaceType = .loopback
-        guard let l = try? NWListener(using: params) else { return nil }
+        guard let l = try? NWListener(using: params) else {
+            lastStartError = "NWListener init a échoué"
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
         listener = l
         l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
-        let sem = DispatchSemaphore(value: 0)
-        l.stateUpdateHandler = { st in
+        // `settled` n'est lu/écrit que sur le main thread → livraison unique, sans course.
+        let deliver: (UInt16?) -> Void = { [weak self] port in
+            DispatchQueue.main.async {
+                guard let self = self, !self.settled else { return }
+                self.settled = true
+                completion(port)
+            }
+        }
+        l.stateUpdateHandler = { [weak self] st in
             switch st {
-            case .ready, .failed, .cancelled: sem.signal()
+            case .ready:          deliver(l.port?.rawValue)
+            case .waiting(let e): self?.lastStartError = "waiting(\(e))"
+            case .failed(let e):  self?.lastStartError = "failed(\(e))"; deliver(nil)
+            case .cancelled:      deliver(nil)
             default: break
             }
         }
         l.start(queue: .global())
-        _ = sem.wait(timeout: .now() + 3)
-        return l.port?.rawValue
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self = self, !self.settled else { return }
+            if self.lastStartError == nil { self.lastStartError = "timeout — jamais .ready" }
+            deliver(nil)
+        }
     }
 
     private func accept(_ conn: NWConnection) {
@@ -916,40 +970,76 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let verifier = randomToken()
         let stateTok = randomToken(16)
-        // Voie principale : serveur loopback (zéro copier-coller). S'il ne démarre
-        // pas (rare), on bascule sur le repli manuel.
+        oauthLog("login: démarrage (voie loopback)")
+        // Voie principale : serveur loopback (zéro copier-coller), démarrage NON bloquant.
         let server = OAuthLoopback()
-        guard let port = server.start() else {
-            pasteLogin(verifier: verifier, state: stateTok)
-            return
-        }
         loopback = server
         loggingIn = true
-        // `localhost` (et non 127.0.0.1) : forme que le client OAuth de Claude Code
-        // déclare comme redirect autorisé (loopback RFC 8252, n'importe quel port).
-        let redirect = "http://localhost:\(port)/callback"
-        server.onResult = { [weak self] code, retState in
-            DispatchQueue.main.async {
-                self?.completeLogin(code: code, returnedState: retState,
-                                    verifier: verifier, expectedState: stateTok, redirect: redirect)
-            }
-        }
-        openAuthorize(redirect: redirect, state: stateTok, challenge: pkceChallenge(verifier))
-        // Garde-fou : si le navigateur ne revient jamais (refus, onglet fermé…), on
-        // ne reste pas bloqué en « attente ».
-        let to = DispatchWorkItem { [weak self] in self?.loginTimedOut() }
-        loginTimeout = to
-        DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: to)
         state.needsLogin = false
-        state.error = "Waiting for authorization in your browser…"
+        state.error = "Starting sign-in…"
         updateStatusTitle()
         if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
+        server.start { [weak self] port in
+            guard let self = self else { return }
+            guard let port = port else {
+                // Loopback impossible (rare). ÉCHEC EXPLICITE : on nomme la raison et on
+                // laisse le choix, au lieu de basculer en silence sur le collage manuel
+                // (redirect hébergé, souvent « invalid request » côté Anthropic).
+                let why = server.lastStartError ?? "raison inconnue"
+                oauthLog("loopback: échec démarrage — \(why)")
+                server.stop(); self.loopback = nil; self.loggingIn = false
+                self.loopbackFailed(reason: why, verifier: verifier, state: stateTok)
+                return
+            }
+            oauthLog("loopback: prêt sur le port \(port)")
+            // `localhost` (et non 127.0.0.1) : forme que le client OAuth de Claude Code
+            // déclare comme redirect autorisé (loopback RFC 8252, n'importe quel port).
+            let redirect = "http://localhost:\(port)/callback"
+            server.onResult = { [weak self] code, retState in
+                DispatchQueue.main.async {
+                    self?.completeLogin(code: code, returnedState: retState,
+                                        verifier: verifier, expectedState: stateTok, redirect: redirect)
+                }
+            }
+            self.openAuthorize(redirect: redirect, state: stateTok, challenge: pkceChallenge(verifier))
+            // Garde-fou : si le navigateur ne revient jamais (refus, onglet fermé…), on
+            // ne reste pas bloqué en « attente ».
+            let to = DispatchWorkItem { [weak self] in self?.loginTimedOut() }
+            self.loginTimeout = to
+            DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: to)
+            self.state.error = "Waiting for authorization in your browser…"
+            self.updateStatusTitle()
+            if self.panel.isVisible { self.pushToWeb(animate: false); self.repositionPanel() }
+        }
+    }
+
+    // Le serveur loopback n'a pas démarré (rare). Échec EXPLICITE — chantier « échouer
+    // fort » : on nomme la raison et on laisse le choix (réessayer en collage manuel, ou
+    // renoncer) au lieu de dégrader en silence vers un flux qui finit souvent en
+    // « invalid request ». Le chemin fiable reste rappelé : Claude Code + Refresh.
+    func loopbackFailed(reason: String, verifier: String, state stateTok: String) {
+        let alert = NSAlert()
+        alert.messageText = "Couldn't start the local sign-in helper"
+        alert.informativeText = "The loopback server didn't start (\(reason)). "
+            + "The reliable path is to sign in with Claude Code, then right-click the icon → Refresh. "
+            + "You can still try the manual code method, but it may fail on Anthropic's side."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Try manual code…")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertSecondButtonReturn {
+            oauthLog("loopback échec → l'utilisateur tente le collage manuel")
+            pasteLogin(verifier: verifier, state: stateTok)
+        } else {
+            oauthLog("loopback échec → annulé par l'utilisateur")
+            refresh(force: true)   // re-dérive l'état (le bouton « Sign in » reste)
+        }
     }
 
     // Repli manuel : le redirect est le callback hébergé par Claude, qui affiche le
     // code (« code#state ») ; l'utilisateur le colle ici.
     func pasteLogin(verifier: String, state stateTok: String) {
         loggingIn = true
+        oauthLog("flux manuel (collage de code) utilisé — redirect=\(OAUTH_REDIRECT_MANUAL)")
         openAuthorize(redirect: OAUTH_REDIRECT_MANUAL, state: stateTok, challenge: pkceChallenge(verifier))
         let alert = NSAlert()
         alert.messageText = "Sign in to Claude"
@@ -966,7 +1056,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ? field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) : ""
         // Annulé / fenêtre fermée : on re-dérive l'état réel. Le token en Keychain est
         // peut-être mort → le bouton « Sign in » doit RESTER, pas disparaître en silence.
-        guard !pasted.isEmpty else { loggingIn = false; refresh(force: true); return }
+        guard !pasted.isEmpty else {
+            oauthLog("manuel: annulé")
+            loggingIn = false; refresh(force: true); return
+        }
+        oauthLog("manuel: code saisi")
 
         // La page rend le code sous la forme « code#state ».
         let parts = pasted.split(separator: "#", maxSplits: 1).map(String.init)
@@ -982,6 +1076,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                        verifier: String, expectedState: String, redirect: String) {
         loginTimeout?.cancel(); loginTimeout = nil
         loopback?.stop(); loopback = nil
+        oauthLog("retour navigateur (loopback) — code=\((code?.isEmpty == false) ? "présent" : "absent"), state=\(returnedState == expectedState ? "OK" : "≠")")
         guard let code = code, !code.isEmpty else { loginFailed("Sign-in was cancelled."); return }
         if let rs = returnedState, rs != expectedState { loginFailed("Sign-in check failed — try again."); return }
         state.error = "Signing in…"
@@ -993,6 +1088,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func loginTimedOut() {
         loopback?.stop(); loopback = nil
         loginTimeout = nil
+        oauthLog("login: time-out (navigateur jamais revenu sur le loopback)")
         loginFailed("Sign-in timed out — no response from the browser.")
     }
 
@@ -1014,6 +1110,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             "state=\(enc(state))",
         ].joined(separator: "&")
         if let url = URL(string: OAUTH_AUTHORIZE_URL + "?" + query) {
+            oauthLog("authorize ouvert dans le navigateur — redirect=\(redirect)")
             NSWorkspace.shared.open(url)
         }
     }
@@ -1022,6 +1119,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func exchangeAsync(code: String, state: String, verifier: String, redirect: String) {
         DispatchQueue.global(qos: .userInitiated).async {
             let ok = self.exchangeCode(code: code, state: state, verifier: verifier, redirect: redirect)
+            oauthLog(ok ? "échange code→token: OK (Keychain écrit)" : "échange code→token: ÉCHEC")
             DispatchQueue.main.async {
                 self.loggingIn = false
                 if ok {
@@ -1070,9 +1168,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         req.timeoutInterval = 20
         var json: [String: Any]? = nil
         let sem = DispatchSemaphore(value: 0)
-        urlSession.dataTask(with: req) { data, resp, _ in
+        urlSession.dataTask(with: req) { data, resp, err in
             defer { sem.signal() }
-            guard (resp as? HTTPURLResponse)?.statusCode == 200, let data = data,
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            oauthLog("POST token \(URL(string: url)?.host ?? url) → HTTP \(status)\(err != nil ? " (réseau: \(err!.localizedDescription))" : "")")
+            guard status == 200, let data = data,
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
             json = obj
         }.resume()
@@ -1082,6 +1182,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func loginFailed(_ message: String) {
         loggingIn = false
+        oauthLog("login échec: \(message)")
         state.error = message
         updateStatusTitle()
         if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
@@ -1097,6 +1198,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // continuait d'afficher une conso fausse et l'utilisateur n'était jamais renvoyé vers
     // la reconnexion : exactement le blocage constaté.
     func signedOut(reason: String) {
+        oauthLog("déconnecté — \(reason)")
         DispatchQueue.main.async {
             self.state.needsLogin = true
             self.state.limits = []
@@ -1287,9 +1389,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         req.timeoutInterval = 15
         var json: [String: Any]? = nil
         let sem = DispatchSemaphore(value: 0)
-        urlSession.dataTask(with: req) { data, resp, _ in
+        urlSession.dataTask(with: req) { data, resp, err in
             defer { sem.signal() }
-            guard (resp as? HTTPURLResponse)?.statusCode == 200, let data = data,
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            oauthLog("refresh token → HTTP \(status)\(err != nil ? " (réseau: \(err!.localizedDescription))" : "")")
+            guard status == 200, let data = data,
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
             json = obj
         }.resume()
@@ -1366,10 +1470,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func handleUsageResponse(resp: HTTPURLResponse?, data: Data?, err: Error?) {
         if let err = err {
+            oauthLog("usage: erreur réseau — \(err.localizedDescription)")
             self.apply(limits: nil, error: "Network: \(err.localizedDescription)")
             return
         }
         guard let http = resp, let data = data else {
+            oauthLog("usage: aucune réponse de l'API")
             self.apply(limits: nil, error: "No response from the API.")
             return
         }
@@ -1403,6 +1509,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard http.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let rawLimits = json["limits"] as? [[String: Any]] else {
+            oauthLog("usage: HTTP \(http.statusCode) (réponse inattendue)")
             self.apply(limits: nil, error: "API: HTTP \(http.statusCode)")
             return
         }
