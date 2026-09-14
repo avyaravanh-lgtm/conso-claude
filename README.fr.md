@@ -55,15 +55,24 @@ cd conso-claude
 
 Binaire universel : Apple Silicon et Intel, macOS 15 minimum.
 
-> **Pas de Claude Code ?** Le menu a un bouton « Sign in to Claude » qui lance
-> l'OAuth lui-même, mais l'étape d'autorisation finale peut échouer sur
-> certains comptes/machines — et ça, c'est côté Anthropic, hors de notre
-> contrôle. Le chemin fiable : avoir Claude Code connecté, l'app fait le reste.
+> **La connexion, c'est le rôle de Claude Code.** L'app lit le token que Claude
+> Code dépose dans le trousseau — elle ne se connecte jamais, ne renouvelle jamais
+> le token et ne réécrit jamais cette entrée. (Une version précédente le renouvelait
+> elle-même ; comme le refresh token de Claude Code est à usage unique et tourne à
+> chaque échange, deux clients qui le partagent finissaient par tuer la session pour
+> les deux. La lecture seule règle ça à la racine.) Pas encore de Claude Code ?
+> Lance `claude auth login`, puis clic droit sur ✳ → **Refresh**.
 
 ## Comment ça marche
 
 - Token OAuth de Claude Code lu dans le trousseau macOS
-  (`security find-generic-password -s "Claude Code-credentials"`).
+  (`security find-generic-password -s "Claude Code-credentials"`) — **en lecture
+  seule** : l'app ne renouvelle jamais le token et ne réécrit jamais cette entrée
+  (c'est le rôle de Claude Code).
+- Token expiré : l'app ne tente pas de le rafraîchir (Claude Code s'en charge).
+  Elle affiche les derniers chiffres en **« stale »** avec « ouvre Claude Code pour
+  rafraîchir », relit le trousseau ~1 fois/min, et repart seule dès qu'un token
+  frais apparaît.
 - Interroge `https://api.anthropic.com/api/oauth/usage` — le même endpoint que
   la page « Limites d'utilisation ». Chiffres exacts, pas une estimation.
 - Sobre avec l'API : poll 10 min, re-fetch à l'ouverture seulement si > 5 min,
@@ -88,7 +97,6 @@ Binaire universel : Apple Silicon et Intel, macOS 15 minimum.
 
 ## Si `✳ !` ou « Not signed in »
 
-Vérifie que **Claude Code est connecté sur ce Mac** (`claude`, puis `/login`) :
-ça écrit le token dans le trousseau, puis clic droit sur ✳ → **Refresh**. Le
-bouton « Sign in to Claude » du menu existe aussi, mais le chemin fiable reste
-le token de Claude Code.
+Vérifie que **Claude Code est connecté sur ce Mac** (`claude auth login`, ou
+`claude` puis `/login`) : ça écrit le token dans le trousseau, puis clic droit
+sur ✳ → **Refresh**.
