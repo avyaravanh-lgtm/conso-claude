@@ -48,11 +48,12 @@ cd conso-claude
 
 Right-click the ✳ icon → "Start with macOS" to make it permanent.
 
-> **No Claude Code?** The menu has a "Sign in to Claude" button that runs the OAuth flow itself, but Anthropic's final authorization step can fail on some accounts/machines — and that's on Anthropic's side, outside this app's control. The reliable path is simply to have Claude Code signed in; then this app just works.
+> **Signing in is Claude Code's job.** This app reads the token Claude Code puts in your Keychain — it never signs in, never refreshes the token, and never writes that Keychain entry. (An earlier version did its own refresh; because Claude Code's refresh token is single-use and rotates on every exchange, two clients sharing it eventually killed the session for both. Read-only fixes that at the root.) No Claude Code yet? Run `claude auth login`, then right-click the ✳ icon → **Refresh**.
 
 ## How it works
 
-- Reads Claude Code's OAuth token from the macOS Keychain (`security find-generic-password -s "Claude Code-credentials"`), at request time only.
+- Reads Claude Code's OAuth token from the macOS Keychain (`security find-generic-password -s "Claude Code-credentials"`), at request time only — **read-only**: it never renews the token or rewrites that entry (that's Claude Code's job).
+- When the token has expired, it doesn't try to refresh it (Claude Code does that): it shows the last known numbers as **stale** with "open Claude Code to refresh", re-reads the Keychain about once a minute, and resumes on its own once a fresh token appears.
 - Queries `https://api.anthropic.com/api/oauth/usage` — the same endpoint the official "Usage limits" page uses. Exact numbers, not an estimate.
 - Polite with the API: polls every 10 minutes, refreshes on popover open only if data is older than 5 minutes, silent backoff on 429 (cached data stays displayed with a ⚠ next to the timestamp).
 - Usage history is kept locally (UserDefaults, 3 rolling days) for the sparkline and the dry-by prediction.
@@ -67,7 +68,7 @@ Right-click the ✳ icon → "Start with macOS" to make it permanent.
 - External data is HTML-escaped before display (anti-injection).
 - The banner window ignores the mouse and captures no input.
 
-Small enough to audit in one sitting: `main.swift` + `Banner.swift`, ~900 lines total.
+Small enough to audit in one sitting: `main.swift` + `Banner.swift`, ~1,400 lines total.
 
 ## Customize the phrases
 
@@ -77,7 +78,7 @@ Drop a `phrases.json` in `~/Library/Application Support/Conso Claude/` to extend
 
 - The usage endpoint is not officially documented; if Anthropic changes it, the app shows a friendly error until updated.
 - Distributed as source, not as a notarized download — building it locally is what keeps it out of Gatekeeper's way (no Apple Developer account needed).
-- If the menu bar shows `✳ !` or "Not signed in": make sure Claude Code is signed in on this Mac (`claude` → `/login`), then right-click the icon → **Refresh**. The in-app "Sign in to Claude" button exists too, but the reliable path is the Claude Code token.
+- If the menu bar shows `✳ !` or "Not signed in": make sure Claude Code is signed in on this Mac (`claude auth login`, or `claude` → `/login`), then right-click the icon → **Refresh**.
 
 ---
 

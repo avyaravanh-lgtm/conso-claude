@@ -2,6 +2,38 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.0 — 2026-09-14
+
+### Lectrice seule du jeton Claude Code — fini le partage de refresh token qui cassait la session
+**Le bug de fond.** Depuis la v1.2, l'app ne se contentait pas de lire le Trousseau :
+elle renouvelait elle-même le jeton OAuth (`grant_type=refresh_token`) et réécrivait
+l'entrée `Claude Code-credentials`. Or ce **refresh token est à usage unique et tourne
+à chaque échange**. L'app et chaque processus Claude Code s'en partageaient une copie ;
+tôt ou tard l'un présentait un jeton déjà consommé, et la session mourait **pour tout le
+monde** — `accessToken`/`refreshToken` vidés dans le Trousseau, Conductor et le CLI
+`claude` déconnectés (« OAuth session expired and could not be refreshed »). Constaté le
+14/09/2026 ; `oauth.log` montrait « refresh token → HTTP 200 » le matin puis « HTTP 400 »
+en boucle dès 16:27.
+
+**Le correctif — l'app redevient un simple compagnon, jamais un second client OAuth :**
+- **Lecture seule du Trousseau.** Plus aucun `grant_type=refresh_token`, plus aucune
+  écriture de l'entrée `Claude Code-credentials`. `readCreds()` n'extrait que
+  l'`accessToken` et l'`expiresAt` — pas de compte, pas de blob complet, pas de
+  refreshToken : réécrire est devenu **impossible par construction**. `refreshOAuthToken()`
+  et `writeCreds()` sont supprimés.
+- **Jeton expiré ou rejeté (401/403) → on attend Claude Code.** L'app garde les derniers
+  chiffres connus en **« stale »**, affiche « Session expired — open Claude Code to
+  refresh. », **pose un backoff franc (au plus une tentative réseau par minute)** et
+  **relit le Trousseau une fois par minute**. Dès que Claude Code repose un jeton frais,
+  l'app repart toute seule — sans jamais toucher au jeton.
+- **Login intégré retiré.** L'app ne fait plus le flux OAuth (loopback + navigateur) :
+  c'est ce flux qui expirait en « connexion invalide ». Le popover affiche désormais
+  « Sign in with Claude Code — run `claude auth login`, then refresh », et le menu propose
+  « How to sign in… ». Serveur loopback, PKCE, échange de code et endpoints de token
+  supprimés.
+- **`oauth.log` ne montre plus jamais « refresh token → »** (la ligne n'existe plus) et
+  n'a, comme avant, jamais contenu de secret.
+
 ## 1.4.0 — 2026-07-22
 
 ### Login intégré refait sur le flux `/login` (loopback) + doc distribution honnête
