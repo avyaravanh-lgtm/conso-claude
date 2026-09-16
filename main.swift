@@ -41,6 +41,16 @@ struct UsageState {
 // et le relit dans le Trousseau. Pour un PREMIER login : `claude auth login`.
 let KEYCHAIN_SERVICE = "Claude Code-credentials"
 
+// Message affiché quand le jeton de Claude Code est expiré/rejeté. On est LECTEUR SEUL :
+// on ne renouvelle jamais le jeton, c'est Claude Code qui le fait — et il ne le fait qu'au
+// moment d'un VRAI appel (pas juste parce qu'une fenêtre est ouverte, restée oisive depuis
+// avant l'expiration : une nuit d'inactivité, typiquement). L'ancien texte « open Claude
+// Code to refresh » induisait en erreur — Monsieur ouvrait Claude Code, rafraîchissait, et
+// « ça ne prend pas », parce qu'ouvrir ≠ appeler. Le nouveau dit la vérité utile : SERVEZ-
+// vous de Claude Code (un message suffit) et Conso repart tout seul (poll 1/min + relecture
+// à l'ouverture du popover). Voir waitForClaudeCode / pollKeychainIfWaiting.
+let SESSION_WAIT_MSG = "Session expired — use Claude Code once and it refreshes on its own."
+
 // Journal du flux de login OAuth — ÉVÉNEMENTS uniquement, JAMAIS de secret : aucun
 // token, code, verifier ni refreshToken n'y entre (on n'y met que des statuts, ports,
 // hôtes et raisons d'erreur). But : diagnostiquer un échec de reconnexion sur le VRAI
@@ -621,6 +631,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         repositionPanel()
         panel.makeKeyAndOrderFront(nil)
         installClickMonitor()
+        // Si on ATTEND un jeton frais (session expirée), relire le Trousseau tout de suite :
+        // Monsieur vient probablement de se servir de Claude Code, le jeton neuf est peut-être
+        // déjà là. On repart à l'instant de l'ouverture au lieu d'attendre le poll d'1 min —
+        // c'est exactement ce qui manquait quand « ça ne prend pas » à chaque ↻.
+        if awaitingClaudeCode || state.needsLogin { pollKeychainIfWaiting() }
         // Refetch seulement si les données datent (> 5 min) — sinon on garde le cache.
         if state.fetchedAt.map({ Date().timeIntervalSince($0) > 300 }) ?? true {
             refresh()
@@ -1080,7 +1095,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let nowMs = Date().timeIntervalSince1970 * 1000
             let expired = creds.expiresAtMs.map { nowMs >= $0 - 60_000 } ?? false
             if expired {
-                self.waitForClaudeCode(reason: "Session expired — open Claude Code to refresh.", rejected: nil)
+                self.waitForClaudeCode(reason: SESSION_WAIT_MSG, rejected: nil)
                 return
             }
             let (resp, data, err) = self.performUsageRequest(token: creds.accessToken)
@@ -1088,7 +1103,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // On NE relance PAS de refresh (on n'en fait plus) — on mémorise ce jeton
             // comme rejeté et on attend que Claude Code en pose un autre.
             if resp?.statusCode == 401 || resp?.statusCode == 403 {
-                self.waitForClaudeCode(reason: "Session expired — open Claude Code to refresh.",
+                self.waitForClaudeCode(reason: SESSION_WAIT_MSG,
                                        rejected: creds.accessToken)
                 return
             }
@@ -1130,7 +1145,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Filet : `refresh()` intercepte normalement le 401/403 (avec le jeton en
             // main). Si on arrive quand même ici, même conduite — on attend Claude Code
             // au lieu d'effacer les chiffres : c'est lui qui renouvelle le jeton.
-            self.waitForClaudeCode(reason: "Session expired — open Claude Code to refresh.", rejected: nil)
+            self.waitForClaudeCode(reason: SESSION_WAIT_MSG, rejected: nil)
             return
         }
         guard http.statusCode == 200,
