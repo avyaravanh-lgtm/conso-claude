@@ -2,6 +2,33 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.1 — 2026-09-16
+
+### « Session expired » qui ne bougeait pas alors que Claude Code était ouvert
+**Le symptôme.** Le matin, après une nuit sans activité, le popover affichait
+« Session expired — open Claude Code to refresh. » et **restait bloqué** : Claude Code
+était pourtant ouvert, et « j'ai beau refresh, ça ne prend pas ».
+
+**La cause, pas un bug — la conséquence du bon design.** Depuis la 1.5.0, l'app est
+**lectrice seule** du jeton de Claude Code (elle ne le renouvelle plus elle-même, c'est ce
+qui cassait la session partagée). Or Claude Code ne renouvelle le jeton **qu'au moment d'un
+vrai appel API**, pas juste parce qu'une fenêtre reste ouverte. Une fenêtre ouverte mais
+oisive depuis avant l'expiration (typiquement toute la nuit) ne déclenche donc rien, et
+l'app attend, à raison, un jeton frais qui n'arrive pas tant qu'on ne se sert pas de Claude
+Code. Cliquer ↻ relisait le même jeton expiré → toujours le même message.
+
+**Le correctif — dire la vérité, et repartir dès qu'on peut :**
+- **Message honnête.** « Session expired — use Claude Code once and it refreshes on its
+  own. » Fini le « open Claude Code » qui laissait croire qu'ouvrir suffit : ce qu'il faut,
+  c'est *se servir* de Claude Code une fois (un message suffit), et Conso repart seul.
+- **Reprise instantanée à l'ouverture du popover.** Quand l'app attend un jeton frais,
+  ouvrir le popover (ou cliquer ↻) relit le Trousseau **immédiatement** au lieu d'attendre
+  le poll d'une minute — dès que Claude Code a reposé un jeton neuf, l'affichage repart à
+  l'instant où on regarde.
+
+Aucun changement au principe lectrice-seule : l'app ne touche toujours jamais l'entrée
+`Claude Code-credentials` du Trousseau.
+
 ## 1.5.0 — 2026-09-14
 
 ### Lectrice seule du jeton Claude Code — fini le partage de refresh token qui cassait la session
