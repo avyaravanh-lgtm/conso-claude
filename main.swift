@@ -26,6 +26,14 @@ struct UsageState {
     // Aucun token en Keychain (ou expiré) → le popover propose « Sign in » plutôt
     // qu'un message qui renvoie vers le Terminal.
     var needsLogin = false
+    // État BÉNIN et FRÉQUENT (≈ chaque soir) : le jeton de Claude Code a expiré et
+    // l'app, lectrice seule, attend simplement que Claude Code le renouvelle au prochain
+    // usage. Distinct de `error` : ce n'est pas une panne, donc on l'affiche en gris
+    // discret et sans « Session expired » anxiogène (voir SESSION_WAIT_MSG,
+    // waitForClaudeCode, et le rendu `.calm` dans le popover). Mutuellement exclusif
+    // avec `error` : entrer en attente efface l'erreur, et toute vraie erreur/succès
+    // efface l'attente.
+    var waiting = false
 }
 
 // Conso Claude est un COMPAGNON de Claude Code, pas un second client OAuth. Elle
@@ -41,15 +49,20 @@ struct UsageState {
 // et le relit dans le Trousseau. Pour un PREMIER login : `claude auth login`.
 let KEYCHAIN_SERVICE = "Claude Code-credentials"
 
-// Message affiché quand le jeton de Claude Code est expiré/rejeté. On est LECTEUR SEUL :
-// on ne renouvelle jamais le jeton, c'est Claude Code qui le fait — et il ne le fait qu'au
+// Message affiché quand le jeton de Claude Code a expiré. On est LECTEUR SEUL : on ne
+// renouvelle jamais le jeton, c'est Claude Code qui le fait — et il ne le fait qu'au
 // moment d'un VRAI appel (pas juste parce qu'une fenêtre est ouverte, restée oisive depuis
-// avant l'expiration : une nuit d'inactivité, typiquement). L'ancien texte « open Claude
-// Code to refresh » induisait en erreur — Monsieur ouvrait Claude Code, rafraîchissait, et
-// « ça ne prend pas », parce qu'ouvrir ≠ appeler. Le nouveau dit la vérité utile : SERVEZ-
-// vous de Claude Code (un message suffit) et Conso repart tout seul (poll 1/min + relecture
-// à l'ouverture du popover). Voir waitForClaudeCode / pollKeychainIfWaiting.
-let SESSION_WAIT_MSG = "Session expired — use Claude Code once and it refreshes on its own."
+// avant l'expiration). Le jeton de Claude Code expire ainsi ≈ chaque soir/nuit et le reste
+// TANT QUE Monsieur ne se sert pas de Claude Code — c.-à-d. des heures durant, chaque nuit
+// (constaté dans oauth.log : expiration ~17-18h, reprise le lendemain matin au premier
+// usage). Ce n'est donc PAS une panne, c'est le fonctionnement normal d'un lecteur seul —
+// et l'afficher en orange « Session expired » chaque soir, c'est crier au feu tous les
+// jours. Le texte est donc CALME et honnête (« en pause, ça repart au prochain usage »),
+// et il s'affiche en GRIS discret, pas en orange d'alerte (drapeau `waiting`, pas `error` ;
+// voir UsageState.waiting, waitForClaudeCode, et le rendu `.calm` dans le popover). Conso
+// repart tout seul dès que Claude Code repose un jeton frais (poll 1/min + relecture à
+// l'ouverture du popover). Voir waitForClaudeCode / pollKeychainIfWaiting.
+let SESSION_WAIT_MSG = "Paused — refreshes next time you use Claude Code."
 
 // Journal du flux de login OAuth — ÉVÉNEMENTS uniquement, JAMAIS de secret : aucun
 // token, code, verifier ni refreshToken n'y entre (on n'y met que des statuts, ports,
@@ -168,6 +181,9 @@ body {
 }
 @keyframes shine { to { left:110%; } }
 #err { font-size:10px; color:#e8940c; margin:-4px 0 8px; }
+/* Attente bénigne (jeton expiré → Conso attend Claude Code, ≈ chaque soir) : gris
+   discret, jamais l'orange d'alerte — ce n'est pas une panne. */
+#err.calm { color: light-dark(rgba(20,18,15,.4), rgba(245,240,232,.42)); }
 /* Bloc d'INFO (pas un bouton) : l'app ne fait plus le login elle-même — elle est
    lectrice du jeton de Claude Code. On renvoie donc vers Claude Code / `claude auth
    login` au lieu d'ouvrir un navigateur. */
@@ -320,6 +336,8 @@ function render(d, animate) {
   // propose de se connecter, l'instruction se suffit à elle-même.
   $('err').hidden = !d.error || d.needsLogin;
   $('err').textContent = d.error || '';
+  // Attente calme (jeton expiré) en gris ; vraie erreur en orange.
+  $('err').classList.toggle('calm', !!d.calm);
   const lg = $('login');
   lg.hidden = !d.needsLogin;
   // Contenu figé (aucune donnée utilisateur) → innerHTML sûr.
@@ -678,7 +696,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func popoverSize() -> NSSize {
         let n = max(state.limits.count, 1)
         var h: CGFloat = 12 + CGFloat(n) * 38 + 19 + 8
-        if state.error != nil && !state.needsLogin { h += 22 }
+        if (state.error != nil || state.waiting) && !state.needsLogin { h += 22 }
         if state.needsLogin { h += 52 }   // bloc d'info « Sign in with Claude Code »
         let spk = sparkPayload()
         if spk.count >= 3, (spk.compactMap { $0["a"] as? Double }.max() ?? 0) >= 1800 { h += 38 }
@@ -709,7 +727,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             "needsLogin": state.needsLogin,
             "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
         ]
-        if let e = state.error { payload["error"] = e }
+        // Attente calme (jeton expiré, on attend Claude Code) : même emplacement que le
+        // message d'erreur, mais drapeau `calm` → rendu gris discret, pas orange d'alerte.
+        // `waiting` et `error` sont mutuellement exclusifs (voir UsageState.waiting).
+        if state.waiting {
+            payload["error"] = SESSION_WAIT_MSG
+            payload["calm"] = true
+        } else if let e = state.error {
+            payload["error"] = e
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8) else { return }
         let anim = (animate && !reduceMotion) ? "true" : "false"
@@ -865,7 +891,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if let r = rejected { self.lastRejectedToken = r }
             self.backoffUntil = Date().addingTimeInterval(60)
             self.state.needsLogin = false
-            self.state.error = reason
+            // État calme, pas une erreur : gris discret dans le popover, jamais l'orange
+            // d'alerte. `error` est réservé aux VRAIES pannes (réseau, 429, HTTP) et
+            // s'efface ici pour ne pas cohabiter avec l'attente.
+            self.state.waiting = true
+            self.state.error = nil
             self.state.stale = !self.state.limits.isEmpty
             self.updateStatusTitle()
             if self.panel.isVisible { self.pushToWeb(animate: false); self.repositionPanel() }
@@ -903,6 +933,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async {
             self.awaitingClaudeCode = false
             self.lastRejectedToken = nil
+            self.state.waiting = false
             self.state.needsLogin = true
             self.state.limits = []
             self.state.stale = false
@@ -1129,6 +1160,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let pause = max(900, min(retryAfter, 3600))
             DispatchQueue.main.async {
                 self.backoffUntil = Date().addingTimeInterval(pause)
+                self.state.waiting = false
                 self.state.stale = !self.state.limits.isEmpty
                 self.state.error = self.state.limits.isEmpty
                     ? "API limit reached — retrying in \(Int(pause / 60)) min."
@@ -1188,6 +1220,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.state.fetchedAt = Date()
                 self.state.stale = false
                 self.state.needsLogin = false
+                self.state.waiting = false
                 // Un 200 clôt toute attente : jeton valide, on repart normalement.
                 self.awaitingClaudeCode = false
                 self.lastRejectedToken = nil
@@ -1198,6 +1231,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     self.recordHistory(sessionPercent: s.percent)
                 }
             } else if error != nil {
+                // Vraie erreur (réseau, HTTP inattendu) : elle prime sur l'attente calme
+                // pour ne pas afficher les deux à la fois.
+                self.state.waiting = false
                 self.state.stale = !self.state.limits.isEmpty
             }
             self.updateStatusTitle()
