@@ -2,6 +2,32 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.2 — 2026-09-17
+
+### « Session expired » en orange tous les soirs, alors que rien n'est cassé
+**Le symptôme.** « Je tombe constamment sur *session à rafraîchir* alors que Claude Code
+est ouvert. » Le popover affichait un bandeau **orange d'alerte** « Session expired » une
+grande partie de chaque soirée et de chaque nuit.
+
+**La cause — pas un bug, mais une alarme mal calibrée.** Le journal `oauth.log` est sans
+équivoque : le jeton de Claude Code expire ≈ chaque soir (~17-18h) et **le reste jusqu'au
+lendemain matin**, quand Monsieur se sert de Claude Code pour la première fois (reprises
+constatées à 09h04, 10h22, 11h45). C'est le fonctionnement **normal** d'une app lectrice
+seule (1.5.0) : elle ne renouvelle jamais le jeton — c'est Claude Code qui le fait, et
+seulement à un vrai appel. Le problème n'est donc pas la logique (elle repart bien toute
+seule), c'est qu'on **criait au feu** en orange chaque soir pour un état parfaitement
+attendu et sans gravité.
+
+**Le correctif — distinguer une attente d'une panne :**
+- **Un état « en attente » à part, calme.** Le jeton expiré qui attend Claude Code n'est
+  plus traité comme une erreur : il s'affiche en **gris discret**, pas en orange (réservé
+  désormais aux vraies pannes — réseau, 429, HTTP inattendu). Les deux ne coexistent jamais.
+- **Un texte honnête et sans stress.** « Paused — refreshes next time you use Claude Code. »
+  Fini « Session expired », qui laissait croire à une déconnexion : la session Claude de
+  Monsieur n'a rien perdu, c'est juste le jeton lu par Conso qui a fait son temps et
+  repartira au prochain usage. Les derniers chiffres connus restent affichés (en cache),
+  l'icône de la barre de menus ne change pas.
+
 ## 1.5.1 — 2026-09-16
 
 ### « Session expired » qui ne bougeait pas alors que Claude Code était ouvert
