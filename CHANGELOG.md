@@ -2,6 +2,35 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.3 — 2026-09-22
+
+### Le haut du popover se casse, le bas (boutons ↻ ✈︎, version) disparaît
+**Le symptôme.** « On voit plus rien en bas, les boutons refresh ont disparu. » Et sur la
+première ligne, le libellé tronqué (« 5-hour sess… »), un `47` orphelin sous la ligne, et
+la prédiction qui déborde.
+
+**La cause — une seule, pour les deux symptômes.** La hauteur de la fenêtre est **calculée
+à l'avance** dans `popoverSize()`, sur l'hypothèse **d'une ligne = 38 px** ; le HTML est en
+`body { overflow:hidden }`. Cet invariant tenait tant qu'aucune ligne ne passait sur deux
+rangées. Or la ligne « 5-hour session » reçoit en plus la **prédiction** `empty ~HH:MM`
+(`sessionEta()`) : quand elle s'affiche **en même temps** que le compte à rebours de reset
+(`3 h 47`), l'ensemble libellé + prédiction + reset + `%` ne tient plus sur une rangée. Le
+reset passe à la ligne (le `47` orphelin), la ligne fait ~52 px au lieu de 38, tout est
+poussé de ~14 px vers le bas, et **le footer sort de la zone visible et se fait rogner**.
+
+**Le correctif — garantir une seule rangée par ligne** (l'invariant sur lequel repose tout
+le calcul de hauteur) :
+- **`.reset { white-space:nowrap }`** — le compte à rebours ne se coupe plus jamais (fini le
+  `47` orphelin, et c'est lui qui débordait la hauteur).
+- **`.meta { flex-shrink:0 }`** — le bloc `prédiction · reset · %` garde toujours sa rangée
+  entière ; c'est le libellé qui absorbe le manque de place.
+- **`.label { min-width:0 }`** — sans lui, un flex item refuse de descendre sous la largeur
+  de son contenu et l'`text-overflow:ellipsis` ne se déclenche jamais. Avec, le libellé se
+  tronque proprement au lieu de pousser la meta hors cadre.
+
+Aucune donnée n'était perdue : c'était un débordement de mise en page. Les trois barres, la
+prédiction, le reset et le footer coexistent désormais sans se chevaucher ni se faire rogner.
+
 ## 1.5.2 — 2026-09-17
 
 ### « Session expired » en orange tous les soirs, alors que rien n'est cassé
