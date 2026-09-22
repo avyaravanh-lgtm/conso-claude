@@ -151,11 +151,18 @@ body {
 }
 .row { margin-bottom: 12px; }
 .line { display:flex; align-items:baseline; margin-bottom:5px; }
+/* min-width:0 : sans lui, un flex item refuse de descendre sous la largeur de son
+   contenu (min-width:auto par défaut) et l'ellipsis ne se déclenche jamais — le
+   libellé pousse alors la meta au lieu de se tronquer. */
 .label { font-size:11px; font-weight:500; color: light-dark(rgba(20,18,15,.6), rgba(245,240,232,.6));
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
 .session .label { font-weight:600; color: light-dark(rgba(20,18,15,.85), rgba(245,240,232,.9)); }
-.meta { margin-left:auto; display:flex; gap:7px; align-items:baseline; }
-.reset { font-size:9.5px; font-variant-numeric:tabular-nums;
+/* flex-shrink:0 + nowrap : la meta (prédiction · reset · %) garde toujours UNE seule
+   ligne. Le libellé absorbe tout le rétrécissement. C'est l'invariant sur lequel
+   repose popoverSize() (38 px/ligne) : si une ligne passe sur deux rangées, le total
+   calculé est faux et le footer (↻ ✈︎ version) sort de body{overflow:hidden}. */
+.meta { margin-left:auto; display:flex; gap:7px; align-items:baseline; flex-shrink:0; }
+.reset { font-size:9.5px; font-variant-numeric:tabular-nums; white-space:nowrap;
   color: light-dark(rgba(20,18,15,.32), rgba(245,240,232,.35)); }
 .pct { font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; min-width:38px; text-align:right; }
 .session .pct { font-size:13px; }
