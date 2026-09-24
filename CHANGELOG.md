@@ -2,6 +2,31 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.4 — 2026-09-24
+
+### Le bas du popover coupé, encore — cette fois en état « Paused »
+**Le symptôme.** En état d'attente (jeton expiré), le message « Paused — refreshes next
+time you use Claude Code. » passe sur **deux lignes**, la fenêtre reste trop courte et le
+footer (bouton ↻ refresh, ✈︎, version) se fait rogner. « Pas de refresh, la fenêtre n'est
+pas bien dimensionnée. »
+
+**La cause — la racine, pas le énième symptôme.** La hauteur de la fenêtre était **devinée
+à la main** dans `popoverSize()` : 38 px par ligne, +22 px si message, +52 px si login…
+Chaque cas qui ne rentrait pas dans ces suppositions coupait le bas — la prédiction
+`empty ~HH:MM` en 1.5.3, le message « Paused » sur deux lignes ici, et le prochain cas
+qu'on n'a pas prévu. On réparait un symptôme à la fois.
+
+**Le correctif — mesurer au lieu de deviner.** Le popover mesure désormais sa **hauteur de
+contenu réelle** (`document.body.scrollHeight`, après mise en page) et la renvoie à l'app,
+qui redimensionne la fenêtre pile dessus (`applyMeasuredHeight`). `popoverSize()` ne sert
+plus que de secours pour la toute première ouverture, avant la première mesure. Résultat :
+**toute cette classe de bugs de « bas coupé » disparaît d'un coup**, quel que soit le
+contenu (message court ou long, prédiction, spark, bloc login…).
+
+*Note : ceci corrige l'AFFICHAGE en état « Paused ». L'état « Paused » lui-même reste le
+comportement voulu et sûr d'une app lectrice seule (voir 1.5.0) — le jeton de Claude Code
+expire ≈ chaque soir et Conso attend qu'il le renouvelle, sans jamais y toucher.*
+
 ## 1.5.3 — 2026-09-22
 
 ### Le haut du popover se casse, le bas (boutons ↻ ✈︎, version) disparaît

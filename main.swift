@@ -358,6 +358,12 @@ function render(d, animate) {
   $('time').textContent = d.stale ? '⚠︎' : '';
   $('time').title = d.stale ? 'Cached data — last updated ' + d.time : 'Updated at ' + d.time;
   $('ver').textContent = d.version ? 'v' + d.version : '';
+  // La fenêtre native se dimensionne sur la hauteur RÉELLE du contenu, mesurée ici
+  // après mise en page (rAF). Fini les hauteurs devinées à la main dans popoverSize()
+  // qui coupaient le bas dès qu'un cas dépassait la supposition (prédiction, message
+  // « Paused » sur 2 lignes, etc.). body{overflow:hidden} garde scrollHeight juste
+  // même quand le contenu déborde le cadre courant.
+  requestAnimationFrame(() => post('h:' + Math.ceil(document.body.scrollHeight)));
 }
 const post = m => window.webkit.messageHandlers.act.postMessage(m);
 $('btn-r').addEventListener('click', () => {
@@ -586,9 +592,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.contentView = web.contentView()
 
         web.onAction = { [weak self] action in
+            guard let self else { return }
             switch action {
-            case "refresh": self?.refresh(force: true)
-            case "plane": self?.testPlane()
+            case "refresh": self.refresh(force: true)
+            case "plane": self.testPlane()
+            case let a where a.hasPrefix("h:"):
+                if let h = Double(a.dropFirst(2)) { self.applyMeasuredHeight(CGFloat(h)) }
             default: break
             }
         }
@@ -700,7 +709,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // Hauteur RÉELLE du contenu, mesurée par le popover après mise en page (voir le
+    // `post('h:…')` dans render() et applyMeasuredHeight). Fait AUTORITÉ dès qu'elle
+    // arrive ; le calcul ci-dessous n'est plus qu'un secours pour la toute première
+    // ouverture, avant la première mesure.
+    var measuredContentHeight: CGFloat?
+
     func popoverSize() -> NSSize {
+        if let m = measuredContentHeight { return NSSize(width: 248, height: m) }
         let n = max(state.limits.count, 1)
         var h: CGFloat = 12 + CGFloat(n) * 38 + 19 + 8
         if (state.error != nil || state.waiting) && !state.needsLogin { h += 22 }
@@ -708,6 +724,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let spk = sparkPayload()
         if spk.count >= 3, (spk.compactMap { $0["a"] as? Double }.max() ?? 0) >= 1800 { h += 38 }
         return NSSize(width: 248, height: h)
+    }
+
+    // Le popover a mesuré sa hauteur de contenu : on redimensionne la fenêtre pile
+    // dessus. Borné (garde-fou anti-valeur folle), et on ne bouge la fenêtre que si
+    // la hauteur a réellement changé, pour ne pas la faire vibrer à chaque render.
+    func applyMeasuredHeight(_ h: CGFloat) {
+        let clamped = max(80, min(h, 900))
+        guard abs((measuredContentHeight ?? -1) - clamped) >= 1 else { return }
+        measuredContentHeight = clamped
+        if panel.isVisible { repositionPanel() }
     }
 
     func pushToWeb(animate: Bool) {
