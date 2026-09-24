@@ -2,6 +2,26 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.5 — 2026-09-24
+
+### L'avion dit maintenant DE QUELLE conso il parle — visuellement
+**Le symptôme.** « On reçoit des avions pour les trois (session, tous modèles, Fable) avec
+des valeurs différentes, et on ne comprend pas de quoi ils parlent. » L'ancienne banderole
+ne se distinguait que par une ligne de texte en petites capitales.
+
+**Le correctif — reconnaître la famille SANS lire.** Chaque avion porte désormais trois
+repères visuels, en plus du texte :
+- **Une icône par famille** : ⏱ horloge pour la **session (5 h)**, ▮▮▮ barres croissantes
+  pour **tous modèles · semaine**, ◆ losange pour un **modèle nommé · semaine** (Fable…).
+- **Une couleur d'identité par famille** (bleu / violet / vert-sarcelle), portée par l'icône,
+  le libellé et le liseré de la carte — **indépendante** de la couleur d'urgence du grand
+  nombre (corail / orange / rouge). L'une dit *laquelle*, l'autre *combien*.
+- **Une jauge** à côté du nombre : le remplissage = ce qu'il reste, d'un coup d'œil.
+
+Le libellé passe en français et garde le nom du modèle pour les quotas par modèle
+(« FABLE · SEMAINE »). Le **test d'avion** (clic droit → « Test the plane ✈️ ») fait
+maintenant défiler les **trois** familles à la suite, pour vérifier la distinction.
+
 ## 1.5.4 — 2026-09-24
 
 ### Le bas du popover coupé, encore — cette fois en état « Paused »

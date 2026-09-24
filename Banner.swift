@@ -65,6 +65,73 @@ func drawPlane(in box: NSRect) {
     ink.withAlphaComponent(0.75).setFill(); hub.fill()
 }
 
+// Quelle CONSO l'avion annonce-t-il ? Trois familles, chacune sa couleur, son icône
+// et son libellé court — pour la reconnaître SANS lire (le texte ne fait que confirmer).
+// La couleur de la FAMILLE (bleu/violet/vert) est indépendante de la couleur d'URGENCE
+// du grand nombre (corail/orange/rouge) : l'une dit « laquelle », l'autre « combien ».
+enum BannerKind { case session, weeklyAll, weeklyModel }
+
+func bannerKind(_ context: String) -> BannerKind {
+    let lc = context.lowercased()
+    if lc.contains("session") { return .session }
+    if lc.contains("all models") { return .weeklyAll }
+    if lc.hasPrefix("weekly") { return .weeklyModel }   // « Weekly — Fable », « Weekly — Opus »…
+    return .weeklyAll
+}
+
+// Libellé court, en capitales tracées. Pour un modèle nommé (Fable…), on garde son nom.
+func bannerLabel(_ context: String, _ kind: BannerKind) -> String {
+    switch kind {
+    case .session:   return "SESSION · 5 H"
+    case .weeklyAll: return "TOUS MODÈLES · SEMAINE"
+    case .weeklyModel:
+        let model = context.components(separatedBy: "—").last?.trimmingCharacters(in: .whitespaces) ?? context
+        return "\(model) · SEMAINE".uppercased()
+    }
+}
+
+func bannerKindColor(_ kind: BannerKind) -> NSColor {
+    switch kind {
+    case .session:     return NSColor(srgbRed: 0.24, green: 0.52, blue: 0.78, alpha: 1)  // bleu
+    case .weeklyAll:   return NSColor(srgbRed: 0.52, green: 0.42, blue: 0.82, alpha: 1)  // violet
+    case .weeklyModel: return NSColor(srgbRed: 0.16, green: 0.60, blue: 0.52, alpha: 1)  // vert-sarcelle
+    }
+}
+
+// Icône de la famille, dessinée dans `r` avec la couleur de la famille.
+func drawKindIcon(_ kind: BannerKind, in r: NSRect, color: NSColor) {
+    color.setStroke(); color.setFill()
+    switch kind {
+    case .session:
+        // Horloge : la fenêtre glissante de 5 h.
+        let ring = NSBezierPath(ovalIn: r.insetBy(dx: 1.5, dy: 1.5))
+        ring.lineWidth = 2; ring.stroke()
+        let c = NSPoint(x: r.midX, y: r.midY)
+        let hands = NSBezierPath()
+        hands.move(to: c); hands.line(to: NSPoint(x: c.x, y: c.y + r.height * 0.24))          // aiguille des minutes
+        hands.move(to: c); hands.line(to: NSPoint(x: c.x + r.width * 0.20, y: c.y))            // aiguille des heures
+        hands.lineWidth = 2; hands.lineCapStyle = .round; hands.stroke()
+    case .weeklyAll:
+        // Trois barres croissantes : l'agrégat de TOUS les modèles.
+        let n = 3, gap = r.width * 0.16
+        let bw = (r.width - gap * CGFloat(n - 1)) / CGFloat(n)
+        let heights: [CGFloat] = [0.45, 0.72, 1.0]
+        for i in 0..<n {
+            let x = r.minX + CGFloat(i) * (bw + gap)
+            NSBezierPath(roundedRect: NSRect(x: x, y: r.minY, width: bw, height: r.height * heights[i]),
+                         xRadius: 1.5, yRadius: 1.5).fill()
+        }
+    case .weeklyModel:
+        // Losange plein : UN modèle donné (Fable…).
+        let d = NSBezierPath()
+        d.move(to: NSPoint(x: r.midX, y: r.maxY))
+        d.line(to: NSPoint(x: r.maxX, y: r.midY))
+        d.line(to: NSPoint(x: r.midX, y: r.minY))
+        d.line(to: NSPoint(x: r.minX, y: r.midY))
+        d.close(); d.fill()
+    }
+}
+
 func makeBannerImage(remaining: Int, context: String, phrase: String) -> NSImage {
     // Palette Anthropic : ivoire, encre, accent selon l'urgence.
     let ivory = NSColor(srgbRed: 0.94, green: 0.93, blue: 0.90, alpha: 1)   // #F0EEE6
@@ -78,41 +145,50 @@ func makeBannerImage(remaining: Int, context: String, phrase: String) -> NSImage
         accent = NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)  // corail
     }
 
+    let kind = bannerKind(context)
+    let kindColor = bannerKindColor(kind)
+
     func serif(_ size: CGFloat, _ weight: NSFont.Weight, italic: Bool) -> NSFont {
         var desc = NSFont.systemFont(ofSize: size, weight: weight).fontDescriptor.withDesign(.serif)
         if italic { desc = desc?.withSymbolicTraits(.italic) }
         return desc.flatMap { NSFont(descriptor: $0, size: size) } ?? NSFont.systemFont(ofSize: size, weight: weight)
     }
 
-    // Le héros : le pourcentage restant, gros serif coloré.
+    // Ligne du haut : la FAMILLE (icône + libellé, couleur de famille).
+    let labelStr = NSAttributedString(string: bannerLabel(context, kind), attributes: [
+        .font: NSFont.systemFont(ofSize: 10, weight: .bold),
+        .kern: 1.4,
+        .foregroundColor: kindColor,
+    ])
+    // Le héros : le pourcentage restant, gros serif en couleur d'urgence.
     let numberStr = NSAttributedString(string: "\(remaining) %", attributes: [
-        .font: serif(27, .semibold, italic: false),
+        .font: serif(26, .semibold, italic: false),
         .foregroundColor: accent,
     ])
-    let captionStr = NSAttributedString(string: "remaining · \(context)".uppercased(), attributes: [
-        .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-        .kern: 1.6,
-        .foregroundColor: ink.withAlphaComponent(0.5),
+    let leftStr = NSAttributedString(string: "restant", attributes: [
+        .font: NSFont.systemFont(ofSize: 9, weight: .semibold),
+        .kern: 1.0,
+        .foregroundColor: ink.withAlphaComponent(0.4),
     ])
     let phraseStr = NSAttributedString(string: phrase, attributes: [
-        .font: serif(14, .regular, italic: true),
+        .font: serif(13.5, .regular, italic: true),
         .foregroundColor: ink.withAlphaComponent(0.85),
     ])
-    let markStr = NSAttributedString(string: "✳", attributes: [
-        .font: NSFont.systemFont(ofSize: 22, weight: .bold),
-        .foregroundColor: accent,
-    ])
 
+    let labelSize = labelStr.size()
     let numberSize = numberStr.size()
-    let captionSize = captionStr.size()
+    let leftSize = leftStr.size()
     let phraseSize = phraseStr.size()
-    let markSize = markStr.size()
 
-    let markCol = markSize.width + 14
-    let line1W = numberSize.width + 10 + captionSize.width
-    let textW = max(line1W, phraseSize.width)
-    let cardW = 20 + markCol + textW + 22
-    let cardH: CGFloat = 74
+    let iconBox: CGFloat = 26
+    let iconCol = iconBox + 14          // icône + gouttière
+    let gaugeW: CGFloat = 84            // jauge entre le nombre et « restant »
+    // Ligne 2 : nombre · jauge · « restant ».
+    let line2W = numberSize.width + 12 + gaugeW + 6 + leftSize.width
+    let labelRowW = iconBox + 8 + labelSize.width   // icône + libellé sur la 1re ligne
+    let textW = max(max(labelRowW, line2W), phraseSize.width)
+    let cardW = 18 + iconCol + textW + 20
+    let cardH: CGFloat = 90
     let margin: CGFloat = 18   // marge pour l'ombre
     let planeW: CGFloat = 58
     let planeH: CGFloat = 36
@@ -149,17 +225,42 @@ func makeBannerImage(remaining: Int, context: String, phrase: String) -> NSImage
         path.fill()
         NSGraphicsContext.current?.restoreGraphicsState()
 
-        ink.withAlphaComponent(0.12).setStroke()
-        path.lineWidth = 1
+        // Liseré de la carte, teinté par la FAMILLE (renfort de la couleur d'identité).
+        kindColor.withAlphaComponent(0.35).setStroke()
+        path.lineWidth = 1.5
         path.stroke()
 
-        markStr.draw(at: NSPoint(x: cardX + 18, y: margin + (cardH - markSize.height) / 2))
+        let padTop: CGFloat = 12
+        let xText = cardX + 18 + iconCol
 
-        let xText = cardX + 20 + markCol
-        let numberY = margin + cardH - numberSize.height - 8
+        // Ligne 1 : icône de famille + libellé, alignés en haut.
+        let labelBaseY = margin + cardH - padTop - labelSize.height
+        drawKindIcon(kind, in: NSRect(x: cardX + 18, y: labelBaseY - (iconBox - labelSize.height) / 2 - 2,
+                                      width: iconBox, height: iconBox), color: kindColor)
+        labelStr.draw(at: NSPoint(x: xText, y: labelBaseY))
+
+        // Ligne 2 : grand nombre · jauge · « restant ».
+        let numberY = margin + 12 + phraseSize.height + 8
         numberStr.draw(at: NSPoint(x: xText, y: numberY))
-        captionStr.draw(at: NSPoint(x: xText + numberSize.width + 10, y: numberY + 9))
-        phraseStr.draw(at: NSPoint(x: xText, y: margin + 10))
+
+        // Jauge : piste + remplissage = ce qu'il RESTE, en couleur d'urgence.
+        let gaugeH: CGFloat = 6
+        let gaugeX = xText + numberSize.width + 12
+        let gaugeMidY = numberY + numberSize.height / 2 - 2
+        let gaugeY = gaugeMidY - gaugeH / 2
+        let track = NSBezierPath(roundedRect: NSRect(x: gaugeX, y: gaugeY, width: gaugeW, height: gaugeH),
+                                 xRadius: gaugeH / 2, yRadius: gaugeH / 2)
+        ink.withAlphaComponent(0.12).setFill(); track.fill()
+        let fillW = max(gaugeH, gaugeW * CGFloat(max(0, min(remaining, 100))) / 100)
+        let fill = NSBezierPath(roundedRect: NSRect(x: gaugeX, y: gaugeY, width: fillW, height: gaugeH),
+                                xRadius: gaugeH / 2, yRadius: gaugeH / 2)
+        accent.setFill(); fill.fill()
+
+        // « restant » après la jauge, centré sur elle.
+        leftStr.draw(at: NSPoint(x: gaugeX + gaugeW + 6, y: gaugeMidY - leftSize.height / 2))
+
+        // Ligne 3 : la phrase, en bas.
+        phraseStr.draw(at: NSPoint(x: xText, y: margin + 12))
         return true
     }
 }
