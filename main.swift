@@ -875,10 +875,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func testPlane() {
-        // Chaque test tire un palier au hasard — pour voir toute la variété.
-        let remaining = [50, 25, 10].randomElement()!
-        PlaneBanner.fly(remaining: remaining, context: "5-hour session",
-                        phrase: encouragement(remaining: remaining, context: "5-hour session"))
+        // Le test fait défiler les TROIS familles à la suite (session · tous modèles ·
+        // Fable), chacune à un palier différent — c'est fait pour VÉRIFIER d'un coup d'œil
+        // qu'on les distingue (icône, couleur, libellé, jauge). PlaneBanner.fly sérialise
+        // les vols, donc les trois passent l'un derrière l'autre sans se chevaucher.
+        let demos: [(Int, String)] = [
+            (52, "5-hour session"),
+            (25, "Weekly — all models"),
+            (10, "Weekly — Fable"),
+        ]
+        for (remaining, context) in demos {
+            PlaneBanner.fly(remaining: remaining, context: context,
+                            phrase: encouragement(remaining: remaining, context: context))
+        }
     }
 
     @objc func toggleLogin() {
