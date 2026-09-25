@@ -2,6 +2,22 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.9 — 2026-09-25
+
+### Login indépendant : scope `org:create_api_key` retiré (échec au callback)
+En v1.5.8, la page de consentement Claude s'affichait bien (endpoints corrects), mais après
+« Autoriser » le **callback** échouait sur « Invalid request format ». Cause trouvée en
+décodant le vrai CLI `claude` **et** en relisant le jeton de Claude Code : le scope
+**`org:create_api_key`** est un scope **Console/organisation** qu'un compte perso **Max** ne
+possède pas. Il est toléré à l'affichage du consentement (qui ne le liste même pas) mais fait
+échouer l'étape de callback. Retiré. Scopes désormais alignés sur ce qu'un login claude.ai/Max
+accorde réellement : `user:inference user:profile user:sessions:claude_code user:mcp_servers
+user:file_upload`.
+
+Endpoints confirmés identiques à ceux du CLI `claude` (bundle) : autorisation
+`claude.com/cai/oauth/authorize` (voie Max), callback hébergé
+`platform.claude.com/oauth/code/callback`, token `platform.claude.com/v1/oauth/token`.
+
 ## 1.5.8 — 2026-09-25
 
 ### Icône de barre de menus remise ; login indépendant corrigé (voie du CLI)

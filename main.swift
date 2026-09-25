@@ -73,7 +73,13 @@ let OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 let OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 let OAUTH_TOKEN_URL_ALT = "https://api.anthropic.com/v1/oauth/token"
 let OAUTH_AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize"
-let OAUTH_SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+// Scopes RÉELLEMENT accordés à un login claude.ai/Max (relevés dans le jeton de Claude
+// Code : user:inference/profile/sessions:claude_code/mcp_servers/file_upload). ⚠️ SURTOUT
+// PAS `org:create_api_key` : c'est un scope Console/org qu'un compte perso Max n'a pas —
+// il est toléré à l'affichage du consentement mais fait échouer le CALLBACK
+// (« Invalid request format », constaté le 25/09). Ce sont d'ailleurs exactement les
+// permissions listées sur la page de consentement.
+let OAUTH_SCOPES = "user:inference user:profile user:sessions:claude_code user:mcp_servers user:file_upload"
 let OAUTH_REDIRECT_MANUAL = "https://platform.claude.com/oauth/code/callback"
 // Cloudflare bloque certains User-Agent (erreur 1010) : on force celui du CLI.
 let OAUTH_USER_AGENT = "claude-cli/1.0 (external, cli)"
