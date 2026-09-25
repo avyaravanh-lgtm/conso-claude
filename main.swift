@@ -62,8 +62,16 @@ let CONSO_KEYCHAIN   = "Conso Claude-credentials"  // jeton propre de Conso (lec
 // coexiste avec celles du mini et du MacBook (déjà deux jetons indépendants du même
 // compte qui vivent côte à côte). Rien de secret ici : c'est un identifiant public.
 let OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-let OAUTH_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
-let OAUTH_TOKEN_URL_ALT = "https://platform.claude.com/v1/oauth/token"
+// Endpoints RELEVÉS dans la config du vrai CLI `claude` (bundle, 25/09/2026) :
+//   CONSOLE_AUTHORIZE_URL  = https://platform.claude.com/oauth/authorize   (comptes API/Console)
+//   CLAUDE_AI_AUTHORIZE_URL= https://claude.com/cai/oauth/authorize        (abonnement claude.ai / Max)
+//   TOKEN_URL              = https://platform.claude.com/v1/oauth/token
+// Monsieur est en **Max** → autorisation par la voie claude.ai (CLAUDE_AI_AUTHORIZE_URL).
+// L'échec « Invalid request format » du 25/09 venait du REDIRECT loopback `localhost` (non
+// accepté par le client) ; on passe donc par le callback HÉBERGÉ + collage du code, exactement
+// comme `claude` en CLI. Le token s'échange sur platform.claude.com (repli api.anthropic.com).
+let OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+let OAUTH_TOKEN_URL_ALT = "https://api.anthropic.com/v1/oauth/token"
 let OAUTH_AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize"
 let OAUTH_SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 let OAUTH_REDIRECT_MANUAL = "https://platform.claude.com/oauth/code/callback"
@@ -717,13 +725,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        // Marque de la barre de menus : une VRAIE icône template (SF Symbol), pas le
-        // glyphe « ✳︎ » qui ressortait comme un vieux emoji. Template → se teinte
-        // automatiquement selon la barre (clair/sombre, survol). Le pourcentage reste
-        // le titre, à droite de l'icône.
-        statusItem.button?.image = Self.menuBarMark()
-        statusItem.button?.imagePosition = .imageLeading
-        statusItem.button?.attributedTitle = NSAttributedString(string: "…")
+        statusItem.button?.title = "✳︎ …"
         statusItem.button?.target = self
         statusItem.button?.action = #selector(statusClicked)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -1468,84 +1470,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Login indépendant de Conso (son propre jeton)
 
     // Ouvre le navigateur pour que Conso obtienne SON jeton (entrée séparée). Ne remplace
-    // JAMAIS le jeton de Claude Code. Voie principale : serveur loopback (zéro copier-coller).
+    // JAMAIS le jeton de Claude Code. Voie = callback HÉBERGÉ + collage du code (exactement
+    // comme le CLI `claude` ; le client OAuth n'accepte pas de redirect loopback).
     @objc func startLogin() {
-        if loggingIn { return }
+        // Réinitialise tout login précédent resté en l'air : sans ça, un essai qui a échoué
+        // sans retour navigateur laisse loggingIn=true et un reclic ne ferait plus rien.
+        loginTimeout?.cancel(); loginTimeout = nil
+        loopback?.stop(); loopback = nil
+        loggingIn = false
+
         let info = NSAlert()
         info.messageText = "Give Conso its own token?"
         info.informativeText = "Conso will sign in to Claude in your browser and keep its OWN token, "
             + "separate from Claude Code's. The usage then stays live even when you're not using "
             + "Claude Code on this Mac — no more \u{201C}Paused\u{201D}.\n\n"
-            + "It does NOT touch Claude Code's token — Conso only ever writes its own Keychain entry."
+            + "It does NOT touch Claude Code's token — Conso only ever writes its own Keychain entry.\n\n"
+            + "Your browser will open Claude's page. Approve, then copy the code it shows and paste "
+            + "it back here."
         info.addButton(withTitle: "Sign in")
         info.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         guard info.runModal() == .alertFirstButtonReturn else { return }
 
-        let verifier = randomToken()
-        let stateTok = randomToken(16)
-        oauthLog("login Conso: démarrage (voie loopback)")
-        let server = OAuthLoopback()
-        loopback = server
-        loggingIn = true
-        state.needsLogin = false
-        state.error = "Starting sign-in…"
-        updateStatusTitle()
-        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
-        server.start { [weak self] port in
-            guard let self = self else { return }
-            guard let port = port else {
-                let why = server.lastStartError ?? "raison inconnue"
-                oauthLog("loopback: échec démarrage — \(why)")
-                server.stop(); self.loopback = nil; self.loggingIn = false
-                self.loopbackFailed(reason: why, verifier: verifier, state: stateTok)
-                return
-            }
-            oauthLog("loopback: prêt sur le port \(port)")
-            // `localhost` (RFC 8252) : forme de redirect loopback que le client OAuth
-            // de Claude Code déclare comme autorisée, quel que soit le port.
-            let redirect = "http://localhost:\(port)/callback"
-            server.onResult = { [weak self] code, retState in
-                DispatchQueue.main.async {
-                    self?.completeLogin(code: code, returnedState: retState,
-                                        verifier: verifier, expectedState: stateTok, redirect: redirect)
-                }
-            }
-            self.openAuthorize(redirect: redirect, state: stateTok, challenge: pkceChallenge(verifier))
-            let to = DispatchWorkItem { [weak self] in self?.loginTimedOut() }
-            self.loginTimeout = to
-            DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: to)
-            self.state.error = "Waiting for authorization in your browser…"
-            self.updateStatusTitle()
-            if self.panel.isVisible { self.pushToWeb(animate: false); self.repositionPanel() }
-        }
+        pasteLogin(verifier: randomToken(), state: randomToken(16))
     }
 
-    // Le serveur loopback n'a pas démarré (rare) : on nomme la raison et on propose le
-    // repli par collage manuel du code, ou d'annuler (le repli lecture-seule reste).
-    func loopbackFailed(reason: String, verifier: String, state stateTok: String) {
-        let alert = NSAlert()
-        alert.messageText = "Couldn't start the local sign-in helper"
-        alert.informativeText = "The loopback server didn't start (\(reason)). "
-            + "You can try the manual code method, or cancel — Conso keeps reading Claude Code's "
-            + "token in the meantime."
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Try manual code…")
-        NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertSecondButtonReturn {
-            oauthLog("loopback échec → collage manuel")
-            pasteLogin(verifier: verifier, state: stateTok)
-        } else {
-            oauthLog("loopback échec → annulé")
-            loggingIn = false
-            refresh(force: true)
-        }
-    }
-
-    // Repli manuel : le redirect hébergé affiche « code#state » que l'utilisateur colle.
+    // Flux hébergé : le redirect `platform.claude.com/oauth/code/callback` affiche
+    // « code#state » que l'utilisateur colle. C'est la voie du CLI `claude`.
     func pasteLogin(verifier: String, state stateTok: String) {
         loggingIn = true
-        oauthLog("flux manuel (collage de code) — redirect=\(OAUTH_REDIRECT_MANUAL)")
+        state.needsLogin = false
+        oauthLog("login Conso: flux hébergé (collage de code) — redirect=\(OAUTH_REDIRECT_MANUAL)")
         openAuthorize(redirect: OAUTH_REDIRECT_MANUAL, state: stateTok, challenge: pkceChallenge(verifier))
         let alert = NSAlert()
         alert.messageText = "Sign in to Claude"
@@ -1789,26 +1744,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // Icône de la barre de menus : SF Symbol en mode template. On essaie l'astérisque
-    // (le plus proche de l'ancienne marque), puis « sparkle » en repli, puis rien
-    // (le titre seul suffit). Jamais le glyphe emoji d'avant.
-    static func menuBarMark() -> NSImage? {
-        let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
-        for name in ["asterisk", "sparkle"] {
-            if let base = NSImage(systemSymbolName: name, accessibilityDescription: "Conso Claude"),
-               let img = base.withSymbolConfiguration(cfg) {
-                img.isTemplate = true
-                return img
-            }
-        }
-        return nil
-    }
-
     func updateStatusTitle() {
         if state.limits.isEmpty {
             if state.error != nil {
                 statusItem.button?.attributedTitle = NSAttributedString(
-                    string: "!", attributes: [.foregroundColor: NSColor.systemOrange])
+                    string: "✳︎ !", attributes: [.foregroundColor: NSColor.systemOrange])
             }
             return
         }
@@ -1820,13 +1760,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let accent: NSColor = crit ? .systemRed : .labelColor
         // Même taille que les autres extras du menu bar (batterie, etc.) : ~11pt, poids regular.
         // Mesuré : la batterie rend plus petit que systemFontSize (13pt) → smallSystemFontSize.
-        // On ne passe en gras que dans le rouge (≤ 10 %), pour attirer l'œil. L'icône (image
-        // du bouton) reste à gauche — plus de préfixe « ✳︎ » dans le texte.
+        // On ne passe en gras que dans le rouge (≤ 10 %), pour attirer l'œil.
         let barSize = NSFont.smallSystemFontSize
-        statusItem.button?.attributedTitle = NSAttributedString(string: "\(remaining) %", attributes: [
+        let title = NSMutableAttributedString(string: "✳︎ ", attributes: [
+            .foregroundColor: NSColor.labelColor,
+            .font: NSFont.systemFont(ofSize: barSize),
+        ])
+        title.append(NSAttributedString(string: "\(remaining) %", attributes: [
             .foregroundColor: accent,
             .font: NSFont.monospacedDigitSystemFont(ofSize: barSize, weight: crit ? .bold : .regular),
-        ])
+        ]))
+        statusItem.button?.attributedTitle = title
     }
 }
 

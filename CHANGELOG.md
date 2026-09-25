@@ -2,6 +2,27 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.8 — 2026-09-25
+
+### Icône de barre de menus remise ; login indépendant corrigé (voie du CLI)
+1. **Marque de la barre de menus remise à l'ancienne** (`✳︎` devant le %) — à la demande
+   de Monsieur. (L'icône de l'app / Dock n'avait jamais changé.)
+2. **Login indépendant — « Invalid request format » corrigé.** Le premier essai (v1.5.7)
+   ouvrait `claude.com/cai/oauth/authorize` avec un **redirect loopback `localhost`** que le
+   client OAuth n'accepte pas → rejet. La config du vrai CLI `claude` (relevée dans son
+   bundle) le confirme : deux URL d'autorisation (`CONSOLE_AUTHORIZE_URL` pour l'API,
+   `CLAUDE_AI_AUTHORIZE_URL` pour l'abonnement Max), token sur `platform.claude.com`, et
+   **callback hébergé** `platform.claude.com/oauth/code/callback`. On aligne dessus :
+   - autorisation par la voie **claude.ai / Max** (`claude.com/cai/oauth/authorize`) ;
+   - **callback hébergé + collage du code** (comme `claude` en CLI), fini le loopback ;
+   - échange du token sur `platform.claude.com/v1/oauth/token`.
+3. **Bug corrigé** : après un login échoué sans retour navigateur, `loggingIn` restait bloqué
+   à `true` — un reclic sur « Sign in » ne faisait plus rien. `startLogin` réinitialise
+   maintenant tout login en cours avant d'en relancer un.
+
+L'invariant de sûreté est inchangé (écriture Trousseau verrouillée sur l'entrée de Conso ;
+repli lecture-seule sur Claude Code). Reste à confirmer en réel que l'autorisation aboutit.
+
 ## 1.5.7 — 2026-09-25
 
 ### Jeton indépendant : Conso peut avoir SON propre jeton (fini le « Paused »)
