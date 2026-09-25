@@ -576,7 +576,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "✳︎ …"
+        // Marque de la barre de menus : une VRAIE icône template (SF Symbol), pas le
+        // glyphe « ✳︎ » qui ressortait comme un vieux emoji. Template → se teinte
+        // automatiquement selon la barre (clair/sombre, survol). Le pourcentage reste
+        // le titre, à droite de l'icône.
+        statusItem.button?.image = Self.menuBarMark()
+        statusItem.button?.imagePosition = .imageLeading
+        statusItem.button?.attributedTitle = NSAttributedString(string: "…")
         statusItem.button?.target = self
         statusItem.button?.action = #selector(statusClicked)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -874,20 +880,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return phrase
     }
 
+    // Le test envoie UN SEUL avion par clic, en changeant de famille à chaque fois
+    // (session → tous modèles → Fable → …). Reclique pour voir la famille suivante —
+    // jamais de rafale ni de file qui s'accumule (c'est ce qui donnait l'impression que
+    // « les avions tournent en boucle »).
+    var testPlaneIdx = 0
     @objc func testPlane() {
-        // Le test fait défiler les TROIS familles à la suite (session · tous modèles ·
-        // Fable), chacune à un palier différent — c'est fait pour VÉRIFIER d'un coup d'œil
-        // qu'on les distingue (icône, couleur, libellé, jauge). PlaneBanner.fly sérialise
-        // les vols, donc les trois passent l'un derrière l'autre sans se chevaucher.
         let demos: [(Int, String)] = [
             (52, "5-hour session"),
             (25, "Weekly — all models"),
             (10, "Weekly — Fable"),
         ]
-        for (remaining, context) in demos {
-            PlaneBanner.fly(remaining: remaining, context: context,
-                            phrase: encouragement(remaining: remaining, context: context))
-        }
+        let (remaining, context) = demos[testPlaneIdx % demos.count]
+        testPlaneIdx += 1
+        PlaneBanner.fly(remaining: remaining, context: context,
+                        phrase: encouragement(remaining: remaining, context: context))
     }
 
     @objc func toggleLogin() {
@@ -1286,11 +1293,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // Icône de la barre de menus : SF Symbol en mode template. On essaie l'astérisque
+    // (le plus proche de l'ancienne marque), puis « sparkle » en repli, puis rien
+    // (le titre seul suffit). Jamais le glyphe emoji d'avant.
+    static func menuBarMark() -> NSImage? {
+        let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        for name in ["asterisk", "sparkle"] {
+            if let base = NSImage(systemSymbolName: name, accessibilityDescription: "Conso Claude"),
+               let img = base.withSymbolConfiguration(cfg) {
+                img.isTemplate = true
+                return img
+            }
+        }
+        return nil
+    }
+
     func updateStatusTitle() {
         if state.limits.isEmpty {
             if state.error != nil {
                 statusItem.button?.attributedTitle = NSAttributedString(
-                    string: "✳︎ !", attributes: [.foregroundColor: NSColor.systemOrange])
+                    string: "!", attributes: [.foregroundColor: NSColor.systemOrange])
             }
             return
         }
@@ -1302,17 +1324,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let accent: NSColor = crit ? .systemRed : .labelColor
         // Même taille que les autres extras du menu bar (batterie, etc.) : ~11pt, poids regular.
         // Mesuré : la batterie rend plus petit que systemFontSize (13pt) → smallSystemFontSize.
-        // On ne passe en gras que dans le rouge (≤ 10 %), pour attirer l'œil.
+        // On ne passe en gras que dans le rouge (≤ 10 %), pour attirer l'œil. L'icône (image
+        // du bouton) reste à gauche — plus de préfixe « ✳︎ » dans le texte.
         let barSize = NSFont.smallSystemFontSize
-        let title = NSMutableAttributedString(string: "✳︎ ", attributes: [
-            .foregroundColor: NSColor.labelColor,
-            .font: NSFont.systemFont(ofSize: barSize),
-        ])
-        title.append(NSAttributedString(string: "\(remaining) %", attributes: [
+        statusItem.button?.attributedTitle = NSAttributedString(string: "\(remaining) %", attributes: [
             .foregroundColor: accent,
             .font: NSFont.monospacedDigitSystemFont(ofSize: barSize, weight: crit ? .bold : .regular),
-        ]))
-        statusItem.button?.attributedTitle = title
+        ])
     }
 }
 
