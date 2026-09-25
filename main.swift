@@ -73,13 +73,13 @@ let OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 let OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 let OAUTH_TOKEN_URL_ALT = "https://api.anthropic.com/v1/oauth/token"
 let OAUTH_AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize"
-// Scopes RÉELLEMENT accordés à un login claude.ai/Max (relevés dans le jeton de Claude
-// Code : user:inference/profile/sessions:claude_code/mcp_servers/file_upload). ⚠️ SURTOUT
-// PAS `org:create_api_key` : c'est un scope Console/org qu'un compte perso Max n'a pas —
-// il est toléré à l'affichage du consentement mais fait échouer le CALLBACK
-// (« Invalid request format », constaté le 25/09). Ce sont d'ailleurs exactement les
-// permissions listées sur la page de consentement.
-let OAUTH_SCOPES = "user:inference user:profile user:sessions:claude_code user:mcp_servers user:file_upload"
+// Scope : `user:inference` SEUL — copié à l'identique de l'URL que génère le vrai
+// `claude setup-token` (capturée le 25/09 en interceptant l'ouverture du navigateur).
+// C'est le flux « jeton long pour abonnement » = exactement l'usage de Conso. Un seul
+// scope = pas d'espace à encoder → notre URL est identique CARACTÈRE POUR CARACTÈRE à
+// celle du CLI. ⚠️ Ne PAS rallonger cette liste sans re-capturer : mes listes à 5-6
+// scopes (avec org:create_api_key, scope Console) faisaient échouer le callback.
+let OAUTH_SCOPES = "user:inference"
 let OAUTH_REDIRECT_MANUAL = "https://platform.claude.com/oauth/code/callback"
 // Cloudflare bloque certains User-Agent (erreur 1010) : on force celui du CLI.
 let OAUTH_USER_AGENT = "claude-cli/1.0 (external, cli)"
@@ -1476,8 +1476,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Login indépendant de Conso (son propre jeton)
 
     // Ouvre le navigateur pour que Conso obtienne SON jeton (entrée séparée). Ne remplace
-    // JAMAIS le jeton de Claude Code. Voie = callback HÉBERGÉ + collage du code (exactement
-    // comme le CLI `claude` ; le client OAuth n'accepte pas de redirect loopback).
+    // JAMAIS le jeton de Claude Code. Voie = LOOPBACK localhost, exactement comme le vrai
+    // `claude setup-token` (URL capturée et copiée à l'identique) : le navigateur revient
+    // tout seul sur http://localhost:<port>/callback, aucun code à copier-coller.
     @objc func startLogin() {
         // Réinitialise tout login précédent resté en l'air : sans ça, un essai qui a échoué
         // sans retour navigateur laisse loggingIn=true et un reclic ne ferait plus rien.
@@ -1486,23 +1487,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         loggingIn = false
 
         let info = NSAlert()
-        info.messageText = "Give Conso its own token?"
-        info.informativeText = "Conso will sign in to Claude in your browser and keep its OWN token, "
-            + "separate from Claude Code's. The usage then stays live even when you're not using "
-            + "Claude Code on this Mac — no more \u{201C}Paused\u{201D}.\n\n"
-            + "It does NOT touch Claude Code's token — Conso only ever writes its own Keychain entry.\n\n"
-            + "Your browser will open Claude's page. Approve, then copy the code it shows and paste "
-            + "it back here."
+        info.messageText = "Sign Conso in to Claude?"
+        info.informativeText = "Conso gets its own sign-in so the usage keeps updating even when "
+            + "Claude Code isn't running here. It never touches Claude Code's own login."
         info.addButton(withTitle: "Sign in")
         info.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         guard info.runModal() == .alertFirstButtonReturn else { return }
 
-        pasteLogin(verifier: randomToken(), state: randomToken(16))
+        let verifier = randomToken()
+        let stateTok = randomToken(16)
+        oauthLog("login Conso: démarrage (loopback, à l'identique du CLI)")
+        let server = OAuthLoopback()
+        loopback = server
+        loggingIn = true
+        state.needsLogin = false
+        state.error = "Starting sign-in…"
+        updateStatusTitle()
+        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
+        server.start { [weak self] port in
+            guard let self = self else { return }
+            guard let port = port else {
+                let why = server.lastStartError ?? "raison inconnue"
+                oauthLog("loopback: échec démarrage — \(why)")
+                server.stop(); self.loopback = nil; self.loggingIn = false
+                self.loginFailed("Couldn't start the local sign-in helper (\(why)).")
+                return
+            }
+            oauthLog("loopback: prêt sur le port \(port)")
+            // `localhost` (comme le CLI), redirect encodé exactement pareil dans openAuthorize.
+            let redirect = "http://localhost:\(port)/callback"
+            server.onResult = { [weak self] code, retState in
+                DispatchQueue.main.async {
+                    self?.completeLogin(code: code, returnedState: retState,
+                                        verifier: verifier, expectedState: stateTok, redirect: redirect)
+                }
+            }
+            self.openAuthorize(redirect: redirect, state: stateTok, challenge: pkceChallenge(verifier))
+            let to = DispatchWorkItem { [weak self] in self?.loginTimedOut() }
+            self.loginTimeout = to
+            DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: to)
+            self.state.error = "Waiting for authorization in your browser…"
+            self.updateStatusTitle()
+            if self.panel.isVisible { self.pushToWeb(animate: false); self.repositionPanel() }
+        }
     }
 
-    // Flux hébergé : le redirect `platform.claude.com/oauth/code/callback` affiche
-    // « code#state » que l'utilisateur colle. C'est la voie du CLI `claude`.
+    // Repli manuel (collage de code) — conservé au cas où, plus utilisé par défaut.
     func pasteLogin(verifier: String, state stateTok: String) {
         loggingIn = true
         state.needsLogin = false

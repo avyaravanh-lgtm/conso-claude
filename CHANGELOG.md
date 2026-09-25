@@ -2,6 +2,22 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.10 — 2026-09-25
+
+### Login indépendant : URL copiée à l'identique du vrai CLI (loopback + user:inference)
+Après plusieurs « Invalid request format » (au chargement puis, en v1.5.8/1.5.9, APRÈS
+« Autoriser »), j'ai **capturé l'URL exacte** que génère `claude setup-token` — le flux
+« jeton long pour abonnement », qui est précisément l'usage de Conso — en interceptant
+l'ouverture du navigateur, sans compléter le login. Deux écarts corrigés :
+- **Loopback `http://localhost:<port>/callback`**, pas le callback hébergé
+  `platform.claude.com/oauth/code/callback` (ce dernier est réservé aux comptes Console ;
+  d'où l'échec APRÈS Autoriser sur un compte Max). Le navigateur revient tout seul, **fini
+  le copier-coller**.
+- **Scope = `user:inference` SEUL**, au lieu de mes listes à 5-6 scopes. Un seul scope =
+  aucun espace à encoder → notre URL est identique caractère pour caractère à celle du CLI.
+
+La fenêtre de confirmation, jugée trop intimidante, est raccourcie.
+
 ## 1.5.9 — 2026-09-25
 
 ### Login indépendant : scope `org:create_api_key` retiré (échec au callback)
