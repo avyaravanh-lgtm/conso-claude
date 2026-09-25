@@ -6,6 +6,8 @@
 import Cocoa
 import WebKit
 import ServiceManagement
+import CryptoKit   // SHA256 pour le challenge PKCE du login indépendant
+import Network     // serveur loopback (retour du navigateur) du login indépendant
 
 // MARK: - Données
 
@@ -36,18 +38,37 @@ struct UsageState {
     var waiting = false
 }
 
-// Conso Claude est un COMPAGNON de Claude Code, pas un second client OAuth. Elle
-// LIT le jeton que Claude Code dépose dans le Trousseau (entrée ci-dessous) et s'en
-// sert pour interroger l'API usage — mais elle ne le RENOUVELLE jamais et ne réécrit
-// jamais cette entrée. Motif (constaté le 14/09/2026) : le refreshToken de Claude Code
-// est à usage unique et tourne à chaque échange. Deux clients qui le partagent — l'app
-// d'un côté, chaque processus Claude Code de l'autre — finissent par présenter un jeton
-// déjà consommé, et la session meurt pour tout le monde (accessToken/refreshToken vidés
-// dans le Trousseau, « OAuth session expired and could not be refreshed »). Le
-// renouvellement est donc laissé à Claude Code seul, qui sait le faire sans se marcher
-// dessus. Quand le jeton expire, l'app attend simplement que Claude Code le renouvelle
-// et le relit dans le Trousseau. Pour un PREMIER login : `claude auth login`.
-let KEYCHAIN_SERVICE = "Claude Code-credentials"
+// DEUX entrées de Trousseau, deux rôles bien séparés — c'est ce qui rend le jeton
+// indépendant SÛR, là où le partage a tué la session le 14/09/2026 :
+//
+//  • CLAUDE_KEYCHAIN — le jeton de Claude Code. Conso le LIT (repli) mais ne le
+//    RÉÉCRIT JAMAIS. Motif du 14/09 : le refreshToken de Claude Code est à usage
+//    unique et tourne à chaque échange ; deux clients qui rafraîchissent LA MÊME
+//    entrée finissent par présenter un jeton déjà consommé → mort pour tout le monde.
+//
+//  • CONSO_KEYCHAIN — le jeton PROPRE de Conso, obtenu par SON login (startLogin).
+//    Conso le lit ET le rafraîchit, mais dans SA propre entrée : aucune entrée n'est
+//    partagée, donc aucune rotation ne peut se marcher dessus. writeConsoCreds n'écrit
+//    QUE là — jamais dans CLAUDE_KEYCHAIN (invariant vérifiable, un seul chemin d'écriture).
+//
+// readCreds() préfère l'entrée de Conso ; à défaut elle emprunte celle de Claude Code
+// en lecture seule (comportement historique). Si Conso a son propre jeton, elle reste
+// live en permanence ; sinon elle se comporte comme avant (attend Claude Code).
+let KEYCHAIN_SERVICE = "Claude Code-credentials"   // = CLAUDE_KEYCHAIN (repli, lecture seule)
+let CONSO_KEYCHAIN   = "Conso Claude-credentials"  // jeton propre de Conso (lecture + écriture)
+
+// Client OAuth public de Claude Code (RFC 8252 : redirect loopback autorisé, PKCE S256).
+// Conso réutilise ce client_id pour SA propre autorisation — une 3ᵉ autorisation qui
+// coexiste avec celles du mini et du MacBook (déjà deux jetons indépendants du même
+// compte qui vivent côte à côte). Rien de secret ici : c'est un identifiant public.
+let OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+let OAUTH_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
+let OAUTH_TOKEN_URL_ALT = "https://platform.claude.com/v1/oauth/token"
+let OAUTH_AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize"
+let OAUTH_SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+let OAUTH_REDIRECT_MANUAL = "https://platform.claude.com/oauth/code/callback"
+// Cloudflare bloque certains User-Agent (erreur 1010) : on force celui du CLI.
+let OAUTH_USER_AGENT = "claude-cli/1.0 (external, cli)"
 
 // Message affiché quand le jeton de Claude Code a expiré. On est LECTEUR SEUL : on ne
 // renouvelle jamais le jeton, c'est Claude Code qui le fait — et il ne le fait qu'au
@@ -95,14 +116,127 @@ func oauthLog(_ message: String) {
     }
 }
 
-// Ce qu'on lit du Trousseau — et RIEN de plus. Pas de refreshToken, pas de blob
-// complet, pas de compte : l'app ne réécrit jamais l'entrée, donc elle n'a besoin
-// de retenir que de quoi appeler l'API usage et savoir si le jeton est encore valide.
-// (La lecture seule est garantie par construction : sans blob complet ni compte,
-// aucune réécriture n'est possible.)
+// D'où vient le jeton courant. `own` = l'entrée PROPRE de Conso (on peut la rafraîchir
+// et la réécrire) ; `claudeCode` = jeton EMPRUNTÉ à Claude Code (lecture seule, jamais
+// réécrit — on attend que Claude Code le renouvelle). Cette distinction décide, à chaque
+// refresh, si Conso a le droit de renouveler le jeton elle-même.
+enum CredsSource { case own, claudeCode }
+
+// Ce qu'on lit du Trousseau. Pour l'entrée EMPRUNTÉE (Claude Code), seuls accessToken +
+// expiresAt servent (on ne réécrit jamais). Pour l'entrée PROPRE de Conso, on garde aussi
+// le blob complet + le refreshToken, nécessaires pour rafraîchir et réécrire NOTRE entrée.
 struct KeychainCreds {
+    let source: CredsSource
+    let account: String
+    let full: [String: Any]      // blob complet (contient "claudeAiOauth")
+    let oauth: [String: Any]     // full["claudeAiOauth"]
     let accessToken: String
+    let refreshToken: String?
     let expiresAtMs: Double?
+}
+
+// base64url sans padding — encodage attendu par le challenge PKCE et le state.
+func b64url(_ d: Data) -> String {
+    Data(d).base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+}
+// Jeton aléatoire cryptographique (verifier PKCE, state anti-CSRF). Si le CSPRNG système
+// échouait (quasi impossible), on ne renvoie SURTOUT pas des octets nuls (verifier
+// prévisible) : repli sur le générateur système.
+func randomToken(_ n: Int = 32) -> String {
+    var bytes = [UInt8](repeating: 0, count: n)
+    if SecRandomCopyBytes(kSecRandomDefault, n, &bytes) != errSecSuccess {
+        var rng = SystemRandomNumberGenerator()
+        for i in 0..<n { bytes[i] = UInt8.random(in: 0...255, using: &rng) }
+    }
+    return b64url(Data(bytes))
+}
+// challenge = base64url(SHA256(verifier)) — méthode S256.
+func pkceChallenge(_ verifier: String) -> String {
+    b64url(Data(SHA256.hash(data: Data(verifier.utf8))))
+}
+
+// Petit serveur HTTP sur l'interface loopback : capte le retour du navigateur
+// (`/callback?code=…&state=…`) sans copier-coller. Rien n'est exposé au réseau local.
+final class OAuthLoopback {
+    private var listener: NWListener?
+    private var connections: [NWConnection] = []
+    private var fired = false
+    private var settled = false               // le port n'est livré qu'une seule fois
+    private(set) var lastStartError: String?  // raison lisible d'un échec (→ journal)
+    var onResult: ((_ code: String?, _ state: String?) -> Void)?
+
+    // Démarre l'écoute et livre le port par `completion` (sur le main thread) quand le
+    // listener passe .ready — ou nil (+ lastStartError) sur échec / attente trop longue.
+    func start(completion: @escaping (UInt16?) -> Void) {
+        let params = NWParameters.tcp
+        params.allowLocalEndpointReuse = true
+        params.requiredInterfaceType = .loopback   // lo0 : couvre 127.0.0.1 et ::1
+        guard let l = try? NWListener(using: params) else {
+            lastStartError = "NWListener init a échoué"
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+        listener = l
+        l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
+        let deliver: (UInt16?) -> Void = { [weak self] port in
+            DispatchQueue.main.async {
+                guard let self = self, !self.settled else { return }
+                self.settled = true
+                completion(port)
+            }
+        }
+        l.stateUpdateHandler = { [weak self] st in
+            switch st {
+            case .ready:          deliver(l.port?.rawValue)
+            case .waiting(let e): self?.lastStartError = "waiting(\(e))"
+            case .failed(let e):  self?.lastStartError = "failed(\(e))"; deliver(nil)
+            case .cancelled:      deliver(nil)
+            default: break
+            }
+        }
+        l.start(queue: .global())
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self = self, !self.settled else { return }
+            if self.lastStartError == nil { self.lastStartError = "timeout — jamais .ready" }
+            deliver(nil)
+        }
+    }
+
+    private func accept(_ conn: NWConnection) {
+        connections.append(conn)
+        conn.start(queue: .global())
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, _, _ in
+            guard let self = self else { return }
+            var code: String?, state: String?
+            if let data = data, let req = String(data: data, encoding: .utf8),
+               let line = req.split(separator: "\r\n").first,
+               let path = line.split(separator: " ").dropFirst().first,
+               let comps = URLComponents(string: "http://localhost\(path)") {
+                for item in comps.queryItems ?? [] {
+                    if item.name == "code" { code = item.value }
+                    if item.name == "state" { state = item.value }
+                }
+            }
+            let ok = code != nil
+            let body = ok
+                ? "<h2>Signed in \u{2713}</h2><p>You can close this tab and return to Conso&nbsp;Claude.</p>"
+                : "<h2>Sign-in failed</h2><p>Please try again from the app.</p>"
+            let html = "<!doctype html><meta charset=utf-8><title>Conso Claude</title>" +
+                "<body style='font:16px -apple-system;text-align:center;margin-top:18vh;color:#333'>\(body)</body>"
+            let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n" +
+                "Content-Length: \(html.utf8.count)\r\nConnection: close\r\n\r\n\(html)"
+            conn.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
+            if ok, !self.fired { self.fired = true; self.onResult?(code, state) }
+        }
+    }
+
+    func stop() {
+        listener?.cancel(); listener = nil
+        connections.forEach { $0.cancel() }; connections.removeAll()
+    }
 }
 
 let isoParser: ISO8601DateFormatter = {
@@ -574,6 +708,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // attend que Claude Code en pose un autre — sinon on bouclerait sur le même 401.
     var lastRejectedToken: String?
 
+    // Login indépendant de Conso (voir startLogin). `loggingIn` évite deux flux en
+    // parallèle ; `loopback` garde le serveur vivant le temps du retour navigateur ;
+    // `loginTimeout` abandonne si le navigateur ne revient jamais.
+    var loggingIn = false
+    var loopback: OAuthLoopback?
+    var loginTimeout: DispatchWorkItem?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         // Marque de la barre de menus : une VRAIE icône template (SF Symbol), pas le
@@ -649,6 +790,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let signInItem = NSMenuItem(title: "How to sign in…", action: #selector(showSignInHelp), keyEquivalent: "")
         signInItem.target = self
         menu.addItem(signInItem)
+        menu.addItem(.separator())
+
+        // Jeton indépendant de Conso. On indique la source courante, on propose le login,
+        // et — si Conso a son propre jeton — un retrait qui REVIENT au jeton de Claude Code
+        // (rollback complet, aucune trace : c'est ce qui rend l'essai sans risque).
+        let hasOwn = readCredsFrom(CONSO_KEYCHAIN, source: .own) != nil
+        let tokenInfo = NSMenuItem(
+            title: hasOwn ? "Token — Conso's own ✓" : "Token — borrowed from Claude Code",
+            action: nil, keyEquivalent: "")
+        tokenInfo.isEnabled = false
+        menu.addItem(tokenInfo)
+        let ownLoginItem = NSMenuItem(
+            title: hasOwn ? "Re-sign in to Conso…" : "Sign in to Conso (independent token)…",
+            action: #selector(startLogin), keyEquivalent: "")
+        ownLoginItem.target = self
+        menu.addItem(ownLoginItem)
+        if hasOwn {
+            let signOutItem = NSMenuItem(title: "Remove Conso's token (back to Claude Code)…",
+                                         action: #selector(signOutConso), keyEquivalent: "")
+            signOutItem.target = self
+            menu.addItem(signOutItem)
+        }
         menu.addItem(.separator())
         let loginItem = NSMenuItem(title: "Start with macOS", action: #selector(toggleLogin), keyEquivalent: "")
         loginItem.target = self
@@ -1119,24 +1282,52 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return String(data: data, encoding: .utf8)
     }
 
-    // Lit le blob OAuth complet dans le Keychain (accessToken + refreshToken + expiry).
-    // LECTURE SEULE. On extrait le strict nécessaire (accessToken + expiresAt) et rien
-    // qui permettrait de réécrire : pas de compte, pas de blob complet, pas de
-    // refreshToken. L'app ne renouvelle jamais le jeton et ne touche jamais cette
-    // entrée du Trousseau — c'est le rôle de Claude Code (voir KEYCHAIN_SERVICE).
+    // Jeton courant, par PRIORITÉ : d'abord l'entrée PROPRE de Conso (qu'on peut
+    // rafraîchir), sinon celle de Claude Code en lecture seule (repli historique).
     func readCreds() -> KeychainCreds? {
-        guard let blob = runSecurity(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"]),
+        readCredsFrom(CONSO_KEYCHAIN, source: .own)
+            ?? readCredsFrom(KEYCHAIN_SERVICE, source: .claudeCode)
+    }
+
+    // Lit une entrée donnée. On garde le blob complet + le refreshToken (utiles seulement
+    // pour réécrire NOTRE entrée) ; pour l'entrée empruntée, ils existent mais ne seront
+    // jamais réécrits (writeConsoCreds ne vise que CONSO_KEYCHAIN).
+    func readCredsFrom(_ service: String, source: CredsSource) -> KeychainCreds? {
+        guard let blob = runSecurity(["find-generic-password", "-s", service, "-w"]),
               let data = blob.data(using: .utf8),
               let full = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauth = full["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String,
-              // Claude Code vide accessToken (chaîne "") quand la session meurt : un jeton
-              // vide n'est pas un jeton — on le traite comme « pas connecté ».
+              // accessToken vidé ("") = session morte → « pas de jeton » pour cette entrée.
               !token.isEmpty else { return nil }
+        var account = NSUserName()
+        if let attrs = runSecurity(["find-generic-password", "-s", service]),
+           let m = attrs.range(of: #"(?<="acct"<blob>=")[^"]*"#, options: .regularExpression) {
+            account = String(attrs[m])
+        }
         return KeychainCreds(
+            source: source, account: account, full: full, oauth: oauth,
             accessToken: token,
+            refreshToken: oauth["refreshToken"] as? String,
             expiresAtMs: (oauth["expiresAt"] as? NSNumber)?.doubleValue
         )
+    }
+
+    // ⚠️ SEUL chemin d'écriture du Trousseau, et il vise EXCLUSIVEMENT l'entrée de Conso.
+    // Le service (CONSO_KEYCHAIN) et le compte (NSUserName) sont EN DUR : aucun appelant
+    // ne peut lui faire écrire l'entrée de Claude Code. C'est l'invariant qui garantit
+    // qu'on ne peut pas reproduire le 14/09.
+    func writeConsoCreds(_ full: [String: Any]) -> Bool {
+        guard let data = try? JSONSerialization.data(withJSONObject: full),
+              let str = String(data: data, encoding: .utf8) else { return false }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        p.arguments = ["add-generic-password", "-U", "-a", NSUserName(), "-s", CONSO_KEYCHAIN, "-w", str]
+        p.standardOutput = Pipe()
+        p.standardError = Pipe()
+        do { try p.run() } catch { return false }
+        p.waitUntilExit()
+        return p.terminationStatus == 0
     }
 
     // Appel synchrone de l'API usage. Renvoie (réponse HTTP, données, erreur réseau).
@@ -1163,32 +1354,337 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         fetching = true
         DispatchQueue.global(qos: .userInitiated).async {
             defer { DispatchQueue.main.async { self.fetching = false } }
-            // LECTRICE SEULE : on lit le jeton de Claude Code et on ne le renouvelle
-            // jamais nous-mêmes (voir KEYCHAIN_SERVICE). Rien ici ne réécrit le Trousseau.
             guard let creds = self.readCreds() else {
                 self.signedOut(reason: "Not signed in.")
                 return
             }
-            // Jeton expiré (ou dans < 1 min) : on ne peut plus le renouveler nous-mêmes.
-            // On n'envoie même pas la requête (elle finirait en 401) : on affiche les
-            // derniers chiffres en « stale » et on attend que Claude Code le renouvelle.
+            // Principe : le jeton PROPRE de Conso ne peut qu'AJOUTER de la vivacité. Au
+            // moindre pépin (refresh échoué, jeton refusé), on RETOMBE sur le repli
+            // lecture-seule (jeton frais de Claude Code, sinon attente) — jamais on
+            // n'efface les chiffres. Conso avec son jeton n'est donc jamais PIRE que sans.
+            var token = creds.accessToken
+            var didRefresh = false   // a-t-on DÉJÀ consommé notre refresh token ce cycle ?
             let nowMs = Date().timeIntervalSince1970 * 1000
             let expired = creds.expiresAtMs.map { nowMs >= $0 - 60_000 } ?? false
             if expired {
-                self.waitForClaudeCode(reason: SESSION_WAIT_MSG, rejected: nil)
-                return
+                if creds.source == .own, let fresh = self.refreshConsoToken(creds) {
+                    token = fresh; didRefresh = true   // renouvelé nous-mêmes (aucun partage, aucun risque)
+                } else if let borrowed = self.freshBorrowedToken() {
+                    token = borrowed   // repli : jeton frais de Claude Code
+                } else {
+                    self.waitForClaudeCode(reason: SESSION_WAIT_MSG, rejected: nil)
+                    return
+                }
             }
-            let (resp, data, err) = self.performUsageRequest(token: creds.accessToken)
-            // 401/403 sur un jeton pourtant non expiré : révoqué ou déjà tourné ailleurs.
-            // On NE relance PAS de refresh (on n'en fait plus) — on mémorise ce jeton
-            // comme rejeté et on attend que Claude Code en pose un autre.
+            let (resp, data, err) = self.performUsageRequest(token: token)
+            // 401/403 : jeton révoqué ou tourné ailleurs.
             if resp?.statusCode == 401 || resp?.statusCode == 403 {
-                self.waitForClaudeCode(reason: SESSION_WAIT_MSG,
-                                       rejected: creds.accessToken)
+                // On ne RE-refresh que si on ne l'a PAS déjà fait ce cycle : rejouer un
+                // refresh token déjà consommé (RT0) déclencherait la détection de réutilisation
+                // côté serveur et tuerait NOTRE famille de jetons. Sinon (ou après), on retombe
+                // sur le repli : jeton frais de Claude Code, ou attente.
+                if creds.source == .own, !didRefresh, let fresh = self.refreshConsoToken(creds), fresh != token {
+                    let (r2, d2, e2) = self.performUsageRequest(token: fresh)
+                    if r2?.statusCode == 401 || r2?.statusCode == 403 {
+                        if let b = self.freshBorrowedToken() {
+                            let (r3, d3, e3) = self.performUsageRequest(token: b)
+                            self.handleUsageResponse(resp: r3, data: d3, err: e3)
+                        } else {
+                            self.waitForClaudeCode(reason: SESSION_WAIT_MSG, rejected: nil)
+                        }
+                    } else {
+                        self.handleUsageResponse(resp: r2, data: d2, err: e2)
+                    }
+                } else if let b = self.freshBorrowedToken(), b != token {
+                    let (r3, d3, e3) = self.performUsageRequest(token: b)
+                    self.handleUsageResponse(resp: r3, data: d3, err: e3)
+                } else {
+                    self.waitForClaudeCode(reason: SESSION_WAIT_MSG, rejected: token)
+                }
                 return
             }
             self.handleUsageResponse(resp: resp, data: data, err: err)
         }
+    }
+
+    // Jeton frais EMPRUNTÉ à Claude Code (repli lecture seule) : nil s'il n'existe pas ou
+    // est expiré. Sert de filet quand le jeton propre de Conso fait défaut — on ne renouvelle
+    // jamais celui de Claude Code, on l'utilise seulement s'il est déjà bon.
+    func freshBorrowedToken() -> String? {
+        guard let b = readCredsFrom(KEYCHAIN_SERVICE, source: .claudeCode) else { return nil }
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        let expired = b.expiresAtMs.map { nowMs >= $0 - 60_000 } ?? false
+        return expired ? nil : b.accessToken
+    }
+
+    // Renouvelle le jeton PROPRE de Conso via SON refreshToken, puis réécrit SON entrée
+    // (rotation incluse : on persiste le nouveau refreshToken). N'agit QUE sur une entrée
+    // `own` — jamais sur celle de Claude Code. Renvoie le nouvel accessToken, ou nil.
+    func refreshConsoToken(_ creds: KeychainCreds) -> String? {
+        guard creds.source == .own, let rt = creds.refreshToken else { return nil }
+        let body = try? JSONSerialization.data(withJSONObject: [
+            "grant_type": "refresh_token",
+            "refresh_token": rt,
+            "client_id": OAUTH_CLIENT_ID,
+        ])
+        guard let j = postToken(body: body, url: OAUTH_TOKEN_URL)
+                    ?? postToken(body: body, url: OAUTH_TOKEN_URL_ALT),
+              let access = j["access_token"] as? String else { return nil }
+        var oauth = creds.oauth
+        oauth["accessToken"] = access
+        if let newRt = j["refresh_token"] as? String { oauth["refreshToken"] = newRt }
+        if let ei = (j["expires_in"] as? NSNumber)?.doubleValue {
+            oauth["expiresAt"] = (Date().timeIntervalSince1970 + ei) * 1000
+        }
+        var full = creds.full
+        full["claudeAiOauth"] = oauth
+        guard writeConsoCreds(full) else { return nil }
+        oauthLog("refresh du jeton propre de Conso : OK (entrée Conso réécrite)")
+        return access
+    }
+
+    // POST JSON synchrone vers un endpoint de token ; renvoie le JSON sur 200, sinon nil.
+    func postToken(body: Data?, url: String) -> [String: Any]? {
+        var req = URLRequest(url: URL(string: url)!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(OAUTH_USER_AGENT, forHTTPHeaderField: "User-Agent")
+        req.httpBody = body
+        req.timeoutInterval = 20
+        var json: [String: Any]? = nil
+        let sem = DispatchSemaphore(value: 0)
+        urlSession.dataTask(with: req) { data, resp, err in
+            defer { sem.signal() }
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            oauthLog("POST token \(URL(string: url)?.host ?? url) → HTTP \(status)\(err != nil ? " (réseau: \(err!.localizedDescription))" : "")")
+            guard status == 200, let data = data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            json = obj
+        }.resume()
+        sem.wait()
+        return json
+    }
+
+    // MARK: Login indépendant de Conso (son propre jeton)
+
+    // Ouvre le navigateur pour que Conso obtienne SON jeton (entrée séparée). Ne remplace
+    // JAMAIS le jeton de Claude Code. Voie principale : serveur loopback (zéro copier-coller).
+    @objc func startLogin() {
+        if loggingIn { return }
+        let info = NSAlert()
+        info.messageText = "Give Conso its own token?"
+        info.informativeText = "Conso will sign in to Claude in your browser and keep its OWN token, "
+            + "separate from Claude Code's. The usage then stays live even when you're not using "
+            + "Claude Code on this Mac — no more \u{201C}Paused\u{201D}.\n\n"
+            + "It does NOT touch Claude Code's token — Conso only ever writes its own Keychain entry."
+        info.addButton(withTitle: "Sign in")
+        info.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard info.runModal() == .alertFirstButtonReturn else { return }
+
+        let verifier = randomToken()
+        let stateTok = randomToken(16)
+        oauthLog("login Conso: démarrage (voie loopback)")
+        let server = OAuthLoopback()
+        loopback = server
+        loggingIn = true
+        state.needsLogin = false
+        state.error = "Starting sign-in…"
+        updateStatusTitle()
+        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
+        server.start { [weak self] port in
+            guard let self = self else { return }
+            guard let port = port else {
+                let why = server.lastStartError ?? "raison inconnue"
+                oauthLog("loopback: échec démarrage — \(why)")
+                server.stop(); self.loopback = nil; self.loggingIn = false
+                self.loopbackFailed(reason: why, verifier: verifier, state: stateTok)
+                return
+            }
+            oauthLog("loopback: prêt sur le port \(port)")
+            // `localhost` (RFC 8252) : forme de redirect loopback que le client OAuth
+            // de Claude Code déclare comme autorisée, quel que soit le port.
+            let redirect = "http://localhost:\(port)/callback"
+            server.onResult = { [weak self] code, retState in
+                DispatchQueue.main.async {
+                    self?.completeLogin(code: code, returnedState: retState,
+                                        verifier: verifier, expectedState: stateTok, redirect: redirect)
+                }
+            }
+            self.openAuthorize(redirect: redirect, state: stateTok, challenge: pkceChallenge(verifier))
+            let to = DispatchWorkItem { [weak self] in self?.loginTimedOut() }
+            self.loginTimeout = to
+            DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: to)
+            self.state.error = "Waiting for authorization in your browser…"
+            self.updateStatusTitle()
+            if self.panel.isVisible { self.pushToWeb(animate: false); self.repositionPanel() }
+        }
+    }
+
+    // Le serveur loopback n'a pas démarré (rare) : on nomme la raison et on propose le
+    // repli par collage manuel du code, ou d'annuler (le repli lecture-seule reste).
+    func loopbackFailed(reason: String, verifier: String, state stateTok: String) {
+        let alert = NSAlert()
+        alert.messageText = "Couldn't start the local sign-in helper"
+        alert.informativeText = "The loopback server didn't start (\(reason)). "
+            + "You can try the manual code method, or cancel — Conso keeps reading Claude Code's "
+            + "token in the meantime."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Try manual code…")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertSecondButtonReturn {
+            oauthLog("loopback échec → collage manuel")
+            pasteLogin(verifier: verifier, state: stateTok)
+        } else {
+            oauthLog("loopback échec → annulé")
+            loggingIn = false
+            refresh(force: true)
+        }
+    }
+
+    // Repli manuel : le redirect hébergé affiche « code#state » que l'utilisateur colle.
+    func pasteLogin(verifier: String, state stateTok: String) {
+        loggingIn = true
+        oauthLog("flux manuel (collage de code) — redirect=\(OAUTH_REDIRECT_MANUAL)")
+        openAuthorize(redirect: OAUTH_REDIRECT_MANUAL, state: stateTok, challenge: pkceChallenge(verifier))
+        let alert = NSAlert()
+        alert.messageText = "Sign in to Claude"
+        alert.informativeText = "Your browser opened the Claude authorization page. Approve access, "
+            + "copy the code shown, and paste it here."
+        alert.addButton(withTitle: "Sign in")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.placeholderString = "Paste the code here"
+        alert.accessoryView = field
+        NSApp.activate(ignoringOtherApps: true)
+        alert.window.initialFirstResponder = field
+        let pasted = alert.runModal() == .alertFirstButtonReturn
+            ? field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        guard !pasted.isEmpty else {
+            oauthLog("manuel: annulé")
+            loggingIn = false; refresh(force: true); return
+        }
+        // omittingEmptySubsequences:false → "#" seul donne ["",""] (pas [] qui ferait
+        // planter parts[0]). On garde le code éventuellement vide, filtré juste après.
+        let parts = pasted.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        let code = parts.first ?? ""
+        guard !code.isEmpty else {
+            oauthLog("manuel: code vide"); loggingIn = false; refresh(force: true); return
+        }
+        let retState = parts.count > 1 ? parts[1] : stateTok
+        state.error = "Signing in…"; state.needsLogin = false
+        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
+        exchangeAsync(code: code, state: retState, verifier: verifier, redirect: OAUTH_REDIRECT_MANUAL)
+    }
+
+    // Retour du serveur loopback : valide le state, échange le code, écrit l'entrée Conso.
+    func completeLogin(code: String?, returnedState: String?,
+                       verifier: String, expectedState: String, redirect: String) {
+        loginTimeout?.cancel(); loginTimeout = nil
+        loopback?.stop(); loopback = nil
+        oauthLog("retour navigateur — code=\((code?.isEmpty == false) ? "présent" : "absent"), state=\(returnedState == expectedState ? "OK" : "≠")")
+        guard let code = code, !code.isEmpty else { loginFailed("Sign-in was cancelled."); return }
+        // Le state DOIT être présent ET égal (anti-CSRF). On n'accepte pas un state absent :
+        // notre autorisation en envoie toujours un, le serveur le renvoie toujours.
+        guard returnedState == expectedState else { loginFailed("Sign-in check failed — try again."); return }
+        state.error = "Signing in…"
+        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
+        exchangeAsync(code: code, state: returnedState ?? expectedState, verifier: verifier, redirect: redirect)
+    }
+
+    func loginTimedOut() {
+        loopback?.stop(); loopback = nil
+        loginTimeout = nil
+        oauthLog("login: time-out (navigateur jamais revenu)")
+        loginFailed("Sign-in timed out — no response from the browser.")
+    }
+
+    func loginFailed(_ message: String) {
+        loggingIn = false
+        oauthLog("login échec: \(message)")
+        state.error = message
+        updateStatusTitle()
+        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
+        // On ne force PAS needsLogin : le repli lecture-seule (Claude Code) peut très bien
+        // fonctionner. Un refresh re-dérive l'état réel.
+        refresh(force: true)
+    }
+
+    // Retire le jeton PROPRE de Conso (supprime SON entrée du Trousseau) et revient au
+    // repli lecture-seule sur Claude Code. Réversible et sans trace — le filet de sécurité
+    // de l'essai : si le jeton indépendant pose souci, un clic annule tout.
+    @objc func signOutConso() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        p.arguments = ["delete-generic-password", "-s", CONSO_KEYCHAIN]
+        p.standardOutput = Pipe()
+        p.standardError = Pipe()
+        try? p.run(); p.waitUntilExit()
+        oauthLog("entrée Conso supprimée → repli sur le jeton de Claude Code")
+        state.needsLogin = false
+        refresh(force: true)
+    }
+
+    // Construit l'URL d'autorisation OAuth et l'ouvre. On encode chaque valeur comme
+    // `URLSearchParams` du CLI (`:`→%3A, `/`→%2F) : un serveur strict peut refuser sinon.
+    func openAuthorize(redirect: String, state: String, challenge: String) {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        func enc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s }
+        let query = [
+            "code=true",
+            "client_id=\(enc(OAUTH_CLIENT_ID))",
+            "response_type=code",
+            "redirect_uri=\(enc(redirect))",
+            "scope=\(enc(OAUTH_SCOPES))",
+            "code_challenge=\(enc(challenge))",
+            "code_challenge_method=S256",
+            "state=\(enc(state))",
+        ].joined(separator: "&")
+        if let url = URL(string: OAUTH_AUTHORIZE_URL + "?" + query) {
+            oauthLog("authorize ouvert — redirect=\(redirect)")
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    // Échange code→tokens en fond, écrit l'entrée Conso, puis rafraîchit l'affichage.
+    func exchangeAsync(code: String, state: String, verifier: String, redirect: String) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = self.exchangeCode(code: code, state: state, verifier: verifier, redirect: redirect)
+            oauthLog(ok ? "échange code→token: OK (entrée Conso écrite)" : "échange code→token: ÉCHEC")
+            DispatchQueue.main.async {
+                self.loggingIn = false
+                if ok {
+                    self.state.needsLogin = false
+                    self.state.error = nil
+                    self.refresh(force: true)
+                } else {
+                    self.loginFailed("Sign-in failed — please try again.")
+                }
+            }
+        }
+    }
+
+    // POST authorization_code → tokens (deux endpoints connus), puis écrit l'entrée Conso.
+    func exchangeCode(code: String, state: String, verifier: String, redirect: String) -> Bool {
+        let body = try? JSONSerialization.data(withJSONObject: [
+            "grant_type": "authorization_code",
+            "code": code,
+            "state": state,
+            "client_id": OAUTH_CLIENT_ID,
+            "redirect_uri": redirect,
+            "code_verifier": verifier,
+        ])
+        let j = postToken(body: body, url: OAUTH_TOKEN_URL)
+             ?? postToken(body: body, url: OAUTH_TOKEN_URL_ALT)
+        guard let j = j, let access = j["access_token"] as? String else { return false }
+        var oauth: [String: Any] = ["accessToken": access]
+        if let rt = j["refresh_token"] as? String { oauth["refreshToken"] = rt }
+        if let ei = (j["expires_in"] as? NSNumber)?.doubleValue {
+            oauth["expiresAt"] = (Date().timeIntervalSince1970 + ei) * 1000
+        }
+        if let scope = j["scope"] as? String { oauth["scopes"] = scope.split(separator: " ").map(String.init) }
+        return writeConsoCreds(["claudeAiOauth": oauth])
     }
 
     func handleUsageResponse(resp: HTTPURLResponse?, data: Data?, err: Error?) {
