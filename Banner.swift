@@ -79,14 +79,15 @@ func bannerKind(_ context: String) -> BannerKind {
     return .weeklyAll
 }
 
-// Libellé court, en capitales tracées. Pour un modèle nommé (Fable…), on garde son nom.
+// Libellé court, en capitales tracées — EN ANGLAIS, comme tout le reste de l'app.
+// Pour un modèle nommé (Fable…), on garde son nom.
 func bannerLabel(_ context: String, _ kind: BannerKind) -> String {
     switch kind {
-    case .session:   return "SESSION · 5 H"
-    case .weeklyAll: return "TOUS MODÈLES · SEMAINE"
+    case .session:   return "SESSION · 5H"
+    case .weeklyAll: return "WEEKLY · ALL MODELS"
     case .weeklyModel:
         let model = context.components(separatedBy: "—").last?.trimmingCharacters(in: .whitespaces) ?? context
-        return "\(model) · SEMAINE".uppercased()
+        return "WEEKLY · \(model)".uppercased()
     }
 }
 
@@ -165,7 +166,7 @@ func makeBannerImage(remaining: Int, context: String, phrase: String) -> NSImage
         .font: serif(26, .semibold, italic: false),
         .foregroundColor: accent,
     ])
-    let leftStr = NSAttributedString(string: "restant", attributes: [
+    let leftStr = NSAttributedString(string: "left", attributes: [
         .font: NSFont.systemFont(ofSize: 9, weight: .semibold),
         .kern: 1.0,
         .foregroundColor: ink.withAlphaComponent(0.4),

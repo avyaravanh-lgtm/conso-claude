@@ -2,6 +2,22 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.6 — 2026-09-25
+
+### Retours de Monsieur sur l'avion (v1.5.5) — trois défauts corrigés
+1. **Les avions « tournaient en boucle ».** Le test tirait les **trois** familles à la
+   suite, et chaque reclic empilait une nouvelle file (les vols sont sérialisés) → une
+   rafale sans fin. Désormais **un seul avion par clic**, qui **change de famille** à
+   chaque fois (session → tous modèles → Fable → …). Reclique pour voir la suivante.
+2. **Libellés en français dans une app anglaise.** Retour à l'anglais, cohérent avec le
+   reste : `SESSION · 5H`, `WEEKLY · ALL MODELS`, `WEEKLY · FABLE`, et `left` (au lieu de
+   « restant »).
+3. **Le « vieux emoji » dans la barre de menus.** Le glyphe `✳︎` (U+2733 + VS15) posé
+   devant le pourcentage ressortait comme un vieil emoji. Remplacé par une **vraie icône
+   template** (SF Symbol `asterisk`), qui se teinte proprement selon la barre (clair /
+   sombre / survol). Plus aucun préfixe glyphe dans le texte — juste l'icône et le
+   pourcentage.
+
 ## 1.5.5 — 2026-09-24
 
 ### L'avion dit maintenant DE QUELLE conso il parle — visuellement
