@@ -2,6 +2,38 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.7 — 2026-09-25
+
+### Jeton indépendant : Conso peut avoir SON propre jeton (fini le « Paused »)
+**Le besoin.** Conso lit le jeton de Claude Code. Ce jeton expire ≈ chaque soir et, si on
+n'utilise pas Claude Code sur cette machine, Conso reste « Paused » faute de pouvoir le
+renouveler (elle est lectrice seule — voir 1.5.0, et l'incident du 14/09 où renouveler le
+jeton PARTAGÉ tuait les sessions).
+
+**La solution — une entrée Trousseau SÉPARÉE.** Conso peut maintenant faire son PROPRE
+login OAuth (menu clic droit → « Sign in to Conso (independent token) »). Elle obtient
+alors son propre jeton, rangé dans **sa** propre entrée (`Conso Claude-credentials`),
+qu'elle rafraîchit elle-même — sans jamais toucher celle de Claude Code.
+
+**Sûr par construction :**
+- **Un seul chemin d'écriture** (`writeConsoCreds`), avec le service et le compte EN DUR
+  sur l'entrée de Conso. Aucun appelant ne peut lui faire écrire l'entrée de Claude Code.
+  L'entrée `Claude Code-credentials` n'est plus utilisée qu'en **lecture** (repli). Le
+  partage qui a causé le 14/09 est structurellement impossible.
+- **Jamais pire que le repli.** Si le jeton propre de Conso fait défaut (réseau, refresh
+  échoué, jeton refusé), Conso **retombe** sur le jeton de Claude Code (ou attend) —
+  jamais elle n'efface les chiffres. Le jeton indépendant ne peut qu'AJOUTER de la vivacité.
+- **Réversible en un clic.** Menu → « Remove Conso's token (back to Claude Code) » supprime
+  l'entrée de Conso et revient au comportement lecture seule, sans trace.
+- **Opt-in.** Tant qu'on n'a pas fait ce login, le comportement est identique à avant.
+
+Le menu indique la source courante (« Token — Conso's own ✓ » ou « borrowed from Claude
+Code »). Voie de login : serveur loopback local (zéro copier-coller), repli collage manuel.
+
+> ⚠️ Un point ne peut se valider qu'en conditions réelles : qu'une 3ᵉ autorisation OAuth
+> coexiste avec celles du mini et du MacBook sans invalider la session de Claude Code
+> (politique côté serveur). À tester ensemble, avec le retrait réversible comme filet.
+
 ## 1.5.6 — 2026-09-25
 
 ### Retours de Monsieur sur l'avion (v1.5.5) — trois défauts corrigés
