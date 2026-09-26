@@ -1475,62 +1475,100 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Login indépendant de Conso (son propre jeton)
 
-    // Ouvre le navigateur pour que Conso obtienne SON jeton (entrée séparée). Ne remplace
-    // JAMAIS le jeton de Claude Code. Voie = LOOPBACK localhost, exactement comme le vrai
-    // `claude setup-token` (URL capturée et copiée à l'identique) : le navigateur revient
-    // tout seul sur http://localhost:<port>/callback, aucun code à copier-coller.
+    // On DÉLÈGUE au vrai CLI : `claude setup-token` fait le flux OAuth OFFICIEL (celui qui
+    // marche — le nôtre, à requête pourtant IDENTIQUE au caractère près, était refusé par
+    // claude.ai). Il crée un jeton LONGUE DURÉE, l'imprime sur sa sortie, sans toucher le
+    // Trousseau de Claude Code. On le capture et on le range dans NOTRE entrée. Zéro collage,
+    // flux navigateur officiel — le navigateur revient tout seul (loopback géré par le CLI).
     @objc func startLogin() {
-        // Réinitialise tout login précédent resté en l'air : sans ça, un essai qui a échoué
-        // sans retour navigateur laisse loggingIn=true et un reclic ne ferait plus rien.
-        loginTimeout?.cancel(); loginTimeout = nil
-        loopback?.stop(); loopback = nil
-        loggingIn = false
-
+        if loggingIn { return }
         let info = NSAlert()
         info.messageText = "Sign Conso in to Claude?"
-        info.informativeText = "Conso gets its own sign-in so the usage keeps updating even when "
-            + "Claude Code isn't running here. It never touches Claude Code's own login."
+        info.informativeText = "Conso gets its own long-lived sign-in (through Claude Code's own "
+            + "setup-token flow) so the usage keeps updating even when Claude Code isn't running. "
+            + "Your browser opens once to approve. It never touches Claude Code's own login."
         info.addButton(withTitle: "Sign in")
         info.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         guard info.runModal() == .alertFirstButtonReturn else { return }
 
-        let verifier = randomToken()
-        let stateTok = randomToken(16)
-        oauthLog("login Conso: démarrage (loopback, à l'identique du CLI)")
-        let server = OAuthLoopback()
-        loopback = server
+        guard let claudePath = Self.claudeCLIPath() else {
+            let a = NSAlert()
+            a.messageText = "Claude Code CLI not found"
+            a.informativeText = "Conso signs in through the `claude` command, which it couldn't find. "
+                + "Install / open Claude Code, then try again."
+            NSApp.activate(ignoringOtherApps: true)
+            a.runModal()
+            return
+        }
         loggingIn = true
         state.needsLogin = false
-        state.error = "Starting sign-in…"
+        state.error = "Opening Claude in your browser…"
         updateStatusTitle()
         if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
-        server.start { [weak self] port in
-            guard let self = self else { return }
-            guard let port = port else {
-                let why = server.lastStartError ?? "raison inconnue"
-                oauthLog("loopback: échec démarrage — \(why)")
-                server.stop(); self.loopback = nil; self.loggingIn = false
-                self.loginFailed("Couldn't start the local sign-in helper (\(why)).")
+        oauthLog("login Conso: délégué à `claude setup-token`")
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: claudePath)
+            p.arguments = ["setup-token"]
+            let pipe = Pipe()
+            p.standardOutput = pipe
+            p.standardError = pipe               // le jeton peut sortir sur l'un ou l'autre
+            p.standardInput = FileHandle.nullDevice
+            var env = ProcessInfo.processInfo.environment
+            // PATH complet : le CLI a besoin de `open` pour lancer le navigateur.
+            env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin:" + (env["PATH"] ?? "")
+            p.environment = env
+            do { try p.run() } catch {
+                DispatchQueue.main.async { self.loginFailed("Couldn't start `claude setup-token`.") }
                 return
             }
-            oauthLog("loopback: prêt sur le port \(port)")
-            // `localhost` (comme le CLI), redirect encodé exactement pareil dans openAuthorize.
-            let redirect = "http://localhost:\(port)/callback"
-            server.onResult = { [weak self] code, retState in
-                DispatchQueue.main.async {
-                    self?.completeLogin(code: code, returnedState: retState,
-                                        verifier: verifier, expectedState: stateTok, redirect: redirect)
+            // Filet : si personne n'autorise, on ne bloque pas l'app pour toujours.
+            let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: killer)
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()   // rend la main quand le CLI a fini
+            killer.cancel()
+            p.waitUntilExit()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            guard let token = Self.extractOAuthToken(output) else {
+                oauthLog("setup-token: aucun jeton dans la sortie (\(output.count) o)")
+                DispatchQueue.main.async { self.loginFailed("Sign-in didn't complete — no token returned.") }
+                return
+            }
+            // Jeton longue durée, SANS refreshToken. Expiration lointaine par défaut ; si elle
+            // est en réalité plus courte, un 401 fera simplement retomber sur le repli.
+            let full: [String: Any] = ["claudeAiOauth": [
+                "accessToken": token,
+                "expiresAt": (Date().timeIntervalSince1970 + 365 * 86400) * 1000,
+                "scopes": ["user:inference"],
+            ]]
+            let ok = self.writeConsoCreds(full)
+            oauthLog(ok ? "setup-token: jeton capturé, rangé dans l'entrée Conso" : "setup-token: échec écriture Trousseau")
+            DispatchQueue.main.async {
+                self.loggingIn = false
+                if ok {
+                    self.state.error = nil
+                    self.state.needsLogin = false
+                    self.refresh(force: true)
+                } else {
+                    self.loginFailed("Couldn't save the token to the Keychain.")
                 }
             }
-            self.openAuthorize(redirect: redirect, state: stateTok, challenge: pkceChallenge(verifier))
-            let to = DispatchWorkItem { [weak self] in self?.loginTimedOut() }
-            self.loginTimeout = to
-            DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: to)
-            self.state.error = "Waiting for authorization in your browser…"
-            self.updateStatusTitle()
-            if self.panel.isVisible { self.pushToWeb(animate: false); self.repositionPanel() }
         }
+    }
+
+    // Chemin du binaire `claude` (une app .app n'hérite pas du PATH du shell).
+    static func claudeCLIPath() -> String? {
+        let candidates = ["/opt/homebrew/bin/claude", "/usr/local/bin/claude",
+                          "\(NSHomeDirectory())/.local/bin/claude", "/usr/bin/claude"]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    // Extrait un jeton OAuth longue durée (`sk-ant-oat…`) de la sortie de setup-token.
+    static func extractOAuthToken(_ s: String) -> String? {
+        guard let r = s.range(of: "sk-ant-oat[0-9A-Za-z._-]+", options: .regularExpression) else { return nil }
+        return String(s[r])
     }
 
     // Repli manuel (collage de code) — conservé au cas où, plus utilisé par défaut.

@@ -2,6 +2,25 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.11 — 2026-09-26
+
+### Login indépendant : on délègue au vrai CLI (`claude setup-token`)
+Constat après enquête : l'URL d'autorisation que Conso génère est **identique caractère pour
+caractère** à celle du vrai CLI (vérifié en capturant l'URL de `claude setup-token` et en
+comparant). Pourtant claude.ai **accepte** le flux du CLI et **refuse** celui de Conso après
+« Autoriser » (« Invalid request format ») — une différence côté serveur qu'on ne peut pas
+reproduire depuis l'app, quelle que soit la fidélité de la requête.
+
+Donc au lieu de réimplémenter l'OAuth, **Conso délègue au flux officiel** : « Sign in to
+Conso » lance `claude setup-token` (qui, lui, marche), l'utilisateur clique **Autoriser** une
+fois dans le navigateur, et Conso **capture le jeton longue durée** que le CLI imprime,
+directement dans sa propre entrée Trousseau. **Zéro copier-coller**, flux navigateur officiel,
+jeton longue durée (donc plus de dépendance à Claude Code ouvert, plus de refresh).
+
+Vérifié : lancé comme sous-processus par Conso, `setup-token` ouvre bien le navigateur et
+n'imprime le jeton qu'après autorisation. Le jeton `setup-token` est « inference-only » et ne
+touche jamais l'entrée Trousseau de Claude Code (constaté : elle reste inchangée).
+
 ## 1.5.10 — 2026-09-25
 
 ### Login indépendant : URL copiée à l'identique du vrai CLI (loopback + user:inference)
