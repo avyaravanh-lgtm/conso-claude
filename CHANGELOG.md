@@ -2,6 +2,28 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.14 — 2026-09-26
+
+### Ménage visuel du menu et du popover
+Passe de finition UI/UX, une fois l'app stabilisée.
+
+**Menu (clic droit)** — refonte concise et groupée :
+- Groupes clairs : *Refresh* · *compte/jeton* · *extras* · *quitter*.
+- Ligne d'état du jeton non cliquable (« Signed in — Conso's own token » / « Reading Claude
+  Code's token »), puis les actions, resserrées et à cadre positif : « Sign in again… » et
+  « Use Claude Code's token instead » (au lieu de « Remove Conso's token… »).
+- « How to sign in… » retiré (redondant avec les actions), emoji ✈️ retiré, et « Start with
+  macOS » → **« Open at Login »** (formulation standard macOS).
+
+**Popover** :
+- **Barres plates et nettes** — la lueur (box-shadow) « gamer » est retirée ; le léger dégradé
+  suffit. Un widget de barre de menus reste calme.
+- **Footer épuré** : le bouton « test avion » quitte le popover (il reste dans le menu). Ne
+  restent que *rafraîchir* et la version.
+- **Ligne session lisible** : la prédiction (« empty ~HH:MM ») OU le reset s'affiche, plus les
+  deux — ils se chevauchaient et tronquaient « 5-hour session ». Le reset complet reste dans
+  l'infobulle. Rendu vérifié par capture (WKWebView).
+
 ## 1.5.13 — 2026-09-26
 
 ### L'avion ne passe plus par-dessus une app en plein écran (jeu, vidéo…)

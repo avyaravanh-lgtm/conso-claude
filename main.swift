@@ -327,9 +327,11 @@ body {
   position:absolute; top:0; bottom:0; left:0; width:0; border-radius:3px;
   transition: width .9s cubic-bezier(.16,1,.3,1);
 }
-.fill.ok   { background:linear-gradient(90deg,#f2a984,#d97757); box-shadow:0 0 6px rgba(217,119,87,.55); }
-.fill.warn { background:linear-gradient(90deg,#fac05a,#e8940c); box-shadow:0 0 6px rgba(232,148,12,.55); }
-.fill.crit { background:linear-gradient(90deg,#fa7362,#e5493a); box-shadow:0 0 6px rgba(229,73,58,.6); }
+/* Barres plates et nettes (pas de lueur : un widget de barre de menus reste calme). Le
+   léger dégradé suffit à donner du relief. */
+.fill.ok   { background:linear-gradient(90deg,#e79b76,#d2703f); }
+.fill.warn { background:linear-gradient(90deg,#efab43,#df8a08); }
+.fill.crit { background:linear-gradient(90deg,#ee6151,#df4433); }
 .fill.anim::after {
   content:""; position:absolute; top:0; bottom:0; left:-40px; width:36px;
   background:linear-gradient(90deg,transparent,rgba(255,255,255,.6),transparent);
@@ -389,7 +391,6 @@ body {
 <div id="spk" hidden></div>
 <div id="foot">
   <div class="btn" id="btn-r" title="Refresh"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3"/></svg></div>
-  <div class="btn" id="btn-p" title="Test the plane"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M14.5 1.5 1.5 6.8l4.2 1.9m8.8-7.2L9.2 14.5 7.3 10.3m7.2-8.8L5.7 8.7"/></svg></div>
   <span id="time"></span>
   <span id="ver"></span>
 </div>
@@ -472,7 +473,9 @@ function render(d, animate) {
     row.title = (100 - l.percent) + ' % left · ' + l.resetFull;
     row.innerHTML =
       '<div class="line"><span class="label">' + esc(l.label) + '</span>' +
-      '<span class="meta"><span class="reset">' + (l.eta ? '<span class="eta">' + esc(l.eta) + '</span> · ' : '') + esc(l.reset) + '</span>' +
+      // Prédiction OU reset, pas les deux : ensemble ils tronquaient le libellé. La
+      // prédiction (« quand ça sera à sec ») prime ; le reset complet reste dans l'infobulle.
+      '<span class="meta"><span class="reset">' + (l.eta ? '<span class="eta">' + esc(l.eta) + '</span>' : esc(l.reset)) + '</span>' +
       '<span class="pct ' + s + '"></span></span></div>' +
       '<div class="bar"><div class="fill ' + s + (animate ? ' anim' : '') + '"></div></div>';
     rows.appendChild(row);
@@ -497,7 +500,7 @@ function render(d, animate) {
   const lg = $('login');
   lg.hidden = !d.needsLogin;
   // Contenu figé (aucune donnée utilisateur) → innerHTML sûr.
-  lg.innerHTML = '<b>Sign in with Claude Code</b><br>Run <code>claude auth login</code> in your terminal (or open Claude Code), then refresh ↻.';
+  lg.innerHTML = '<b>No usage data yet</b><br>Right-click the menu-bar icon and choose <b>Sign in to Conso</b>.';
   const sp = spark(d.spark);
   $('spk').innerHTML = sp;
   $('spk').hidden = !sp;
@@ -519,7 +522,6 @@ $('btn-r').addEventListener('click', () => {
   $('btn-r').classList.remove('spin'); void $('btn-r').offsetWidth; $('btn-r').classList.add('spin');
   post('refresh');
 });
-$('btn-p').addEventListener('click', () => post('plane'));
 </script>
 </body></html>
 """#
@@ -805,48 +807,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func showContextMenu() {
         let menu = NSMenu()
         let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let verItem = NSMenuItem(title: "Conso Claude \(ver)", action: nil, keyEquivalent: "")
-        verItem.isEnabled = false
-        menu.addItem(verItem)
+
+        // En-tête discret : le nom + la version, non cliquable.
+        let header = NSMenuItem(title: "Conso Claude \(ver)", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
         menu.addItem(.separator())
+
         let refreshItem = NSMenuItem(title: "Refresh", action: #selector(forceRefresh), keyEquivalent: "r")
         refreshItem.target = self
         menu.addItem(refreshItem)
-        let planeItem = NSMenuItem(title: "Test the plane ✈️", action: #selector(testPlane), keyEquivalent: "")
-        planeItem.target = self
-        menu.addItem(planeItem)
-        menu.addItem(.separator())
-        let signInItem = NSMenuItem(title: "How to sign in…", action: #selector(showSignInHelp), keyEquivalent: "")
-        signInItem.target = self
-        menu.addItem(signInItem)
         menu.addItem(.separator())
 
-        // Jeton indépendant de Conso. On indique la source courante, on propose le login,
-        // et — si Conso a son propre jeton — un retrait qui REVIENT au jeton de Claude Code
-        // (rollback complet, aucune trace : c'est ce qui rend l'essai sans risque).
+        // Compte / jeton : une ligne d'état (non cliquable) puis les actions. Formulations
+        // resserrées, cadre positif (« Use Claude Code's token » plutôt que « Remove… »).
         let hasOwn = readCredsFrom(CONSO_KEYCHAIN, source: .own) != nil
-        let tokenInfo = NSMenuItem(
-            title: hasOwn ? "Token — Conso's own ✓" : "Token — borrowed from Claude Code",
+        let status = NSMenuItem(
+            title: hasOwn ? "Signed in — Conso's own token" : "Reading Claude Code's token",
             action: nil, keyEquivalent: "")
-        tokenInfo.isEnabled = false
-        menu.addItem(tokenInfo)
-        let ownLoginItem = NSMenuItem(
-            title: hasOwn ? "Re-sign in to Conso…" : "Sign in to Conso (independent token)…",
-            action: #selector(startLogin), keyEquivalent: "")
-        ownLoginItem.target = self
-        menu.addItem(ownLoginItem)
+        status.isEnabled = false
+        menu.addItem(status)
+        let signIn = NSMenuItem(title: hasOwn ? "Sign in again…" : "Sign in to Conso…",
+                                action: #selector(startLogin), keyEquivalent: "")
+        signIn.target = self
+        menu.addItem(signIn)
         if hasOwn {
-            let signOutItem = NSMenuItem(title: "Remove Conso's token (back to Claude Code)…",
-                                         action: #selector(signOutConso), keyEquivalent: "")
-            signOutItem.target = self
-            menu.addItem(signOutItem)
+            let useCC = NSMenuItem(title: "Use Claude Code's token instead",
+                                   action: #selector(signOutConso), keyEquivalent: "")
+            useCC.target = self
+            menu.addItem(useCC)
         }
         menu.addItem(.separator())
-        let loginItem = NSMenuItem(title: "Start with macOS", action: #selector(toggleLogin), keyEquivalent: "")
+
+        // Extras / réglages.
+        let planeItem = NSMenuItem(title: "Test the plane", action: #selector(testPlane), keyEquivalent: "")
+        planeItem.target = self
+        menu.addItem(planeItem)
+        let loginItem = NSMenuItem(title: "Open at Login", action: #selector(toggleLogin), keyEquivalent: "")
         loginItem.target = self
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(loginItem)
         menu.addItem(.separator())
+
         menu.addItem(NSMenuItem(title: "Quit Conso Claude", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         statusItem.menu = menu
