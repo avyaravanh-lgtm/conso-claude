@@ -2,6 +2,21 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.12 — 2026-09-26
+
+### Login via setup-token : capture du jeton fiabilisée (PTY)
+En 1.5.11, le flux OAuth réussissait (écran de succès) mais Conso ne **capturait pas** le
+jeton : lancé sans terminal, `claude setup-token` se met en mode silencieux (1 octet écrit)
+et, via un pipe, la lecture restait bloquée (descripteur hérité par le navigateur, jamais
+d'EOF). L'entrée Trousseau de Conso restait vide et le popover bloqué sur « Opening Claude in
+your browser… ».
+
+Correctif : Conso lance le CLI dans un **vrai PTY** (pseudo-terminal). `setup-token` se croit
+alors dans un terminal, imprime tout (vérifié : « Welcome… », « Opening browser… », puis le
+jeton) en ligne, et Conso **lit le côté maître** au fur et à mesure — dès que le jeton
+`sk-ant-oat…` apparaît, il le capture, le range dans sa propre entrée, et repart. Les codes
+ANSI du CLI sont retirés avant extraction. Filet de 5 min si personne n'autorise.
+
 ## 1.5.11 — 2026-09-26
 
 ### Login indépendant : on délègue au vrai CLI (`claude setup-token`)
