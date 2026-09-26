@@ -8,6 +8,7 @@ import WebKit
 import ServiceManagement
 import CryptoKit   // SHA256 pour le challenge PKCE du login indépendant
 import Network     // serveur loopback (retour du navigateur) du login indépendant
+import Darwin      // openpty/read/close : capturer la sortie de `claude setup-token`
 
 // MARK: - Données
 
@@ -1512,28 +1513,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: claudePath)
             p.arguments = ["setup-token"]
-            let pipe = Pipe()
-            p.standardOutput = pipe
-            p.standardError = pipe               // le jeton peut sortir sur l'un ou l'autre
-            p.standardInput = FileHandle.nullDevice
+            // On donne au CLI un vrai PTY (pseudo-terminal). Sans terminal, `setup-token` se
+            // met en mode silencieux et n'imprime quasi rien (1 octet constaté) — donc pas le
+            // jeton. Avec un PTY, il se croit dans un terminal, imprime tout (dont le jeton) en
+            // ligne, et on lit sur le côté MAÎTRE. Le navigateur (lancé via LaunchServices)
+            // n'hérite pas de l'esclave → on reçoit bien l'EOF quand le CLI se termine.
+            var master: Int32 = 0, slave: Int32 = 0
+            guard openpty(&master, &slave, nil, nil, nil) == 0 else {
+                DispatchQueue.main.async { self.loginFailed("Couldn't prepare sign-in (pty).") }
+                return
+            }
+            let slaveHandle = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
+            p.standardOutput = slaveHandle
+            p.standardError = slaveHandle
+            p.standardInput = slaveHandle
             var env = ProcessInfo.processInfo.environment
             // PATH complet : le CLI a besoin de `open` pour lancer le navigateur.
             env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin:" + (env["PATH"] ?? "")
+            env["TERM"] = env["TERM"] ?? "xterm-256color"
             p.environment = env
             do { try p.run() } catch {
+                close(master); close(slave)
                 DispatchQueue.main.async { self.loginFailed("Couldn't start `claude setup-token`.") }
                 return
             }
-            // Filet : si personne n'autorise, on ne bloque pas l'app pour toujours.
+            close(slave)   // le parent n'a besoin que du maître ; l'enfant garde sa copie
+            // Filet : si personne n'autorise, on termine le CLI (→ EOF sur le maître).
             let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
             DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: killer)
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()   // rend la main quand le CLI a fini
+            var acc = Data()
+            var found: String? = nil
+            var buf = [UInt8](repeating: 0, count: 4096)
+            while true {
+                let n = read(master, &buf, buf.count)
+                if n <= 0 { break }   // EOF (CLI terminé) ou erreur
+                acc.append(contentsOf: buf[0..<n])
+                if let t = Self.extractOAuthToken(String(decoding: acc, as: UTF8.self)) { found = t; break }
+            }
             killer.cancel()
+            if p.isRunning { p.terminate() }
+            close(master)
             p.waitUntilExit()
-            let output = String(data: data, encoding: .utf8) ?? ""
-            guard let token = Self.extractOAuthToken(output) else {
-                oauthLog("setup-token: aucun jeton dans la sortie (\(output.count) o)")
-                DispatchQueue.main.async { self.loginFailed("Sign-in didn't complete — no token returned.") }
+            guard let token = found else {
+                oauthLog("setup-token: aucun jeton capturé (\(acc.count) o lus)")
+                DispatchQueue.main.async { self.loginFailed("Sign-in didn't return a token. Please try again.") }
                 return
             }
             // Jeton longue durée, SANS refreshToken. Expiration lointaine par défaut ; si elle
@@ -1565,8 +1588,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    // Extrait un jeton OAuth longue durée (`sk-ant-oat…`) de la sortie de setup-token.
-    static func extractOAuthToken(_ s: String) -> String? {
+    // Extrait un jeton OAuth longue durée (`sk-ant-oat…`) de la sortie de setup-token. Le CLI
+    // tourne dans un PTY et entoure sa sortie de codes ANSI (couleurs, spinner, curseur) : on
+    // les retire d'abord pour que le jeton ressorte propre et entier.
+    static func extractOAuthToken(_ raw: String) -> String? {
+        let s = raw.replacingOccurrences(
+            of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression)
         guard let r = s.range(of: "sk-ant-oat[0-9A-Za-z._-]+", options: .regularExpression) else { return nil }
         return String(s[r])
     }
