@@ -596,11 +596,31 @@ enum PlaneBanner {
         }
     }
 
+    // Une app en PLEIN ÉCRAN (jeu, vidéo…) sur cet écran ? On ne fait pas voler l'avion
+    // par-dessus. Heuristique SANS permission : on ne lit que le calque et les bornes des
+    // fenêtres (les titres, eux, exigeraient l'autorisation d'enregistrement d'écran, qu'on
+    // veut justement éviter). Une fenêtre de calque 0 qui couvre tout l'écran = plein écran.
+    static func screenHasFullScreenWindow(_ screen: NSScreen) -> Bool {
+        let sw = screen.frame.width, sh = screen.frame.height
+        guard let infos = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
+        for w in infos {
+            guard let layer = w[kCGWindowLayer as String] as? Int, layer == 0,
+                  let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+                  let ww = b["Width"], let wh = b["Height"] else { continue }
+            if ww >= sw - 1 && wh >= sh - 1 { return true }
+        }
+        return false
+    }
+
     private static func flyNow(remaining: Int, context: String, phrase: String) {
         // Écran où se trouve la souris — c'est là que l'utilisateur regarde.
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let screen = screen else { return }
+        // Plein écran (jeu…) : on n'interrompt pas. L'avion est simplement sauté (la conso
+        // reste dans le popover). Demande de Monsieur, 26/09.
+        if screenHasFullScreenWindow(screen) { return }
         let sf = screen.visibleFrame
 
         let image = makeBannerImage(remaining: remaining, context: context, phrase: phrase)
@@ -1487,7 +1507,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         info.messageText = "Sign Conso in to Claude?"
         info.informativeText = "Conso gets its own long-lived sign-in (through Claude Code's own "
             + "setup-token flow) so the usage keeps updating even when Claude Code isn't running. "
-            + "Your browser opens once to approve. It never touches Claude Code's own login."
+            + "Your browser opens once to approve. It never touches Claude Code's own login.\n\n"
+            + "This briefly runs Claude Code, so macOS may ask for a permission the first time. "
+            + "You only need to do this about once a year (the token is long-lived) — best not "
+            + "mid-game."
         info.addButton(withTitle: "Sign in")
         info.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)

@@ -2,6 +2,19 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.13 — 2026-09-26
+
+### L'avion ne passe plus par-dessus une app en plein écran (jeu, vidéo…)
+Demande de Monsieur : pas d'avion-banderole quand on est en plein écran. Avant de faire voler
+l'avion, Conso vérifie si une app couvre tout l'écran ; si oui, l'avion est **sauté** (la conso
+reste consultable dans le popover). Détection **sans permission** : on ne lit que le calque et
+les bornes des fenêtres (pas les titres, qui exigeraient l'autorisation d'enregistrement
+d'écran) — une fenêtre de calque 0 qui couvre tout l'écran = plein écran.
+
+Aussi : la fenêtre de login prévient désormais que la connexion passe brièvement par Claude
+Code (macOS peut demander une permission la 1re fois) et qu'on n'a à le faire qu'≈ une fois par
+an — de préférence pas en pleine partie.
+
 ## 1.5.12 — 2026-09-26
 
 ### Login via setup-token : capture du jeton fiabilisée (PTY)
