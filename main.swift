@@ -269,7 +269,10 @@ func parseDate(_ s: String?) -> Date? {
 func fmtResetShort(_ d: Date?) -> String {
     guard let d = d else { return "" }
     let s = Int(d.timeIntervalSinceNow)
-    if s <= 0 { return "reset" }
+    // Reset déjà passé → aucune durée à montrer. On renvoie vide plutôt que le mot
+    // « reset » (qui, affiché seul, ressemblait à un état normal alors qu'en pratique
+    // il ne survient qu'avec des données périmées, désormais signalées par le bandeau).
+    if s <= 0 { return "" }
     let h = s / 3600, m = (s % 3600) / 60
     if h >= 24 { return "\(h / 24) d \(h % 24) h" }
     if h > 0 { return "\(h) h \(String(format: "%02d", m))" }
@@ -370,9 +373,7 @@ body {
 .btn:active svg { transform: scale(.82); }
 #btn-r.spin svg { animation: rot .5s ease; }
 @keyframes rot { to { transform: rotate(360deg); } }
-#time { margin-left:auto; font-size:9px; font-variant-numeric:tabular-nums;
-  color: light-dark(rgba(20,18,15,.25), rgba(245,240,232,.28)); }
-#ver { font-size:9px; margin-left:6px; color: light-dark(rgba(20,18,15,.22), rgba(245,240,232,.25)); }
+#ver { margin-left:auto; font-size:9px; color: light-dark(rgba(20,18,15,.22), rgba(245,240,232,.25)); }
 /* Accessibilité : respecte « Augmenter le contraste » (Réglages > Accessibilité
    > Affichage). On densifie tous les gris uniquement si l'utilisateur l'a activé —
    le look discret reste par défaut. Booster #spk relève aussi le texte SVG du
@@ -381,7 +382,7 @@ body {
   body { color: light-dark(rgba(20,18,15,.98), rgba(245,240,232,1)); }
   .label { color: light-dark(rgba(20,18,15,.82), rgba(245,240,232,.82)); }
   .session .label { color: light-dark(rgba(20,18,15,1), rgba(245,240,232,1)); }
-  .reset, #time { color: light-dark(rgba(20,18,15,.6), rgba(245,240,232,.62)); }
+  .reset { color: light-dark(rgba(20,18,15,.6), rgba(245,240,232,.62)); }
   #spk { color: light-dark(rgba(20,18,15,1), rgba(245,240,232,1)); }
 }
 </style></head><body>
@@ -391,7 +392,6 @@ body {
 <div id="spk" hidden></div>
 <div id="foot">
   <div class="btn" id="btn-r" title="Refresh"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3"/></svg></div>
-  <span id="time"></span>
   <span id="ver"></span>
 </div>
 <script>
@@ -463,6 +463,29 @@ function spark(points) {
     '<text x="1" y="7" font-size="7" fill="currentColor" opacity=".62" letter-spacing="1.2">USED / HOUR' + cap + '</text>' +
     bars + ticks + '</svg>';
 }
+// Compte à rebours VIVANT : à partir de l'epoch absolu du reset, on réaffiche chaque
+// seconde le temps restant ([j] HH:MM:SS). Les secondes rendent la liveness visible et
+// lèvent toute ambiguïté « valeur figée vs décompte ». Vide si le reset est déjà passé.
+let _tick = null;
+function fmtCountdown(epoch) {
+  if (!epoch) return '';
+  let s = Math.floor(epoch - Date.now() / 1000);
+  if (s <= 0) return '';
+  const d = Math.floor(s / 86400); s -= d * 86400;
+  const h = Math.floor(s / 3600); s -= h * 3600;
+  const m = Math.floor(s / 60), sec = s - m * 60;
+  const p = n => String(n).padStart(2, '0');
+  return (d > 0 ? d + 'j ' : '') + p(h) + ':' + p(m) + ':' + p(sec);
+}
+function startTicker() {
+  if (_tick) { clearInterval(_tick); _tick = null; }
+  const els = [].slice.call(document.querySelectorAll('.reset[data-epoch]'))
+    .filter(el => +el.dataset.epoch > 0);
+  if (!els.length) return;
+  const upd = () => els.forEach(el => { el.textContent = fmtCountdown(+el.dataset.epoch); });
+  upd();
+  _tick = setInterval(upd, 1000);
+}
 function render(d, animate) {
   const rows = $('rows');
   rows.innerHTML = '';
@@ -470,12 +493,15 @@ function render(d, animate) {
     const s = sev(l);
     const row = document.createElement('div');
     row.className = 'row' + (l.session ? ' session' : '');
-    row.title = (100 - l.percent) + ' % left · ' + l.resetFull;
+    // Infobulle = tout le détail : % restant, moment exact du reset, et (session) la
+    // prédiction d'épuisement. Inline, on ne garde qu'UNE valeur : le temps avant reset.
+    row.title = (100 - l.percent) + ' % left · ' + l.resetFull + (l.eta ? ' · runs out ' + l.eta : '');
     row.innerHTML =
       '<div class="line"><span class="label">' + esc(l.label) + '</span>' +
-      // Prédiction OU reset, pas les deux : ensemble ils tronquaient le libellé. La
-      // prédiction (« quand ça sera à sec ») prime ; le reset complet reste dans l'infobulle.
-      '<span class="meta"><span class="reset">' + (l.eta ? '<span class="eta">' + esc(l.eta) + '</span>' : esc(l.reset)) + '</span>' +
+      // Temps avant reset en valeur inline sur CHAQUE ligne (session comprise), rendu
+      // par le ticker (data-epoch) en compte à rebours VIVANT [j] HH:MM:SS.
+      // Vide si le reset est déjà passé (données périmées / fetch en échec).
+      '<span class="meta"><span class="reset" data-epoch="' + (l.resetEpoch || 0) + '"></span>' +
       '<span class="pct ' + s + '"></span></span></div>' +
       '<div class="bar"><div class="fill ' + s + (animate ? ' anim' : '') + '"></div></div>';
     rows.appendChild(row);
@@ -491,6 +517,7 @@ function render(d, animate) {
     }
     countUp(pct, l.percent, i * 0.07, animate);
   });
+  startTicker();
   // Le message d'erreur et le bloc de connexion ne coexistent pas : quand on
   // propose de se connecter, l'instruction se suffit à elle-même.
   $('err').hidden = !d.error || d.needsLogin;
@@ -505,10 +532,6 @@ function render(d, animate) {
   $('spk').innerHTML = sp;
   $('spk').hidden = !sp;
   $('spk').title = 'Usage per hour (last 24 h)';
-  // Plus d'horloge : on ne garde que l'alerte ⚠︎ si les données sont en cache
-  // (l'heure de dernière maj reste dispo au survol).
-  $('time').textContent = d.stale ? '⚠︎' : '';
-  $('time').title = d.stale ? 'Cached data — last updated ' + d.time : 'Updated at ' + d.time;
   $('ver').textContent = d.version ? 'v' + d.version : '';
   // La fenêtre native se dimensionne sur la hauteur RÉELLE du contenu, mesurée ici
   // après mise en page (rAF). Fini les hauteurs devinées à la main dans popoverSize()
@@ -870,10 +893,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // déjà là. On repart à l'instant de l'ouverture au lieu d'attendre le poll d'1 min —
         // c'est exactement ce qui manquait quand « ça ne prend pas » à chaque ↻.
         if awaitingClaudeCode || state.needsLogin { pollKeychainIfWaiting() }
-        // Refetch seulement si les données datent (> 5 min) — sinon on garde le cache.
-        if state.fetchedAt.map({ Date().timeIntervalSince($0) > 300 }) ?? true {
-            refresh()
-        }
+        // Clic sur l'icône = tentative de refresh (plus de seuil de 5 min). NON forcé :
+        // on respecte le backoff posé sur un 429. Marteler un endpoint qui répond « Rate
+        // limited » ne ramène aucune donnée fraîche et peut prolonger la limite ; mieux
+        // vaut attendre la fin du backoff (15-60 min) ou la prochaine relance.
+        refresh()
     }
 
     /// Place le panneau juste sous l'icône de la barre de menu (bord haut ancré),
@@ -944,17 +968,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 "label": l.label,
                 "percent": l.percent,
                 "reset": fmtResetShort(l.resetsAt),
+                // Epoch absolu du reset : le popover en fait un compte à rebours VIVANT
+                // (ticker JS à la seconde), au lieu d'une valeur figée au dernier fetch.
+                "resetEpoch": l.resetsAt.map { Int($0.timeIntervalSince1970) } ?? 0,
                 "resetFull": fmtResetFull(l.resetsAt),
                 "severity": l.severity,
                 "session": l.isSession,
                 "eta": l.isSession ? (eta ?? "") : "",
             ])
         }
-        let df = DateFormatter()
-        df.dateFormat = "HH:mm"
         var payload: [String: Any] = [
             "limits": limitsJSON,
-            "time": state.fetchedAt.map { df.string(from: $0) } ?? "",
             "stale": state.stale,
             "spark": sparkPayload(),
             "needsLogin": state.needsLogin,
@@ -1432,6 +1456,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 } else {
                     self.waitForClaudeCode(reason: SESSION_WAIT_MSG, rejected: token)
                 }
+                return
+            }
+            // 429 : l'endpoint /oauth/usage exige les scopes d'une session Claude Code
+            // (user:profile, user:sessions:claude_code…). Notre jeton PROPRE (claude
+            // setup-token, scope user:inference seul) y est rejeté en 429 — ce n'est donc
+            // pas un vrai rate-limit, c'est un scope insuffisant. Le jeton de Claude Code
+            // (scopes complets) y répond 200. On retente en LECTURE SEULE avec lui (jamais
+            // rafraîchi par nous : leçon du 14/09). Sinon, backoff classique via handle().
+            if resp?.statusCode == 429, let b = self.freshBorrowedToken(), b != token {
+                let (rb, db, eb) = self.performUsageRequest(token: b)
+                self.handleUsageResponse(resp: rb, data: db, err: eb)
                 return
             }
             self.handleUsageResponse(resp: resp, data: data, err: err)

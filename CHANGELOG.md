@@ -2,6 +2,30 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.15 — 2026-10-05
+
+### Fetch réparé : repli sur le jeton de Claude Code quand le nôtre est rejeté (429)
+- **Cause racine d'un cache figé depuis le 26/09** : l'endpoint `/oauth/usage` exige les scopes
+  d'une session Claude Code (`user:profile`, `user:sessions:claude_code`…). Le jeton PROPRE de
+  Conso (issu de `claude setup-token`, scope `user:inference` seul) y est **rejeté en HTTP 429**
+  — ce n'est pas un vrai rate-limit, c'est un scope insuffisant. Le jeton de Claude Code y répond
+  200. Jeton Conso valide (exp. 2027) et réseau OK : seul le scope manquait.
+- **Fix** : sur 429, l'app retente l'usage en **LECTURE SEULE** avec le jeton emprunté à Claude
+  Code (jamais rafraîchi par nous — leçon du 14/09), comme elle le fait déjà sur 401/403. Si le
+  jeton propre obtient un jour les bons scopes, il resservira sans changement.
+
+### Compte à rebours vivant avant reset, et refresh à chaque ouverture
+- **Compte à rebours VIVANT du temps avant reset** sur chaque ligne (session comprise),
+  préfixé d'un **↻**, mis à jour à la seconde (`↻ 03:12:05`, `↻ 2j 07:14:30`). Les secondes
+  rendent la liveness visible. La v1.5.14 avait retiré ce décompte de la ligne session (il n'en
+  restait que la prédiction) ; il est restauré. Prédiction d'épuisement et moment exact du reset
+  partent dans l'infobulle.
+- **Refresh à chaque ouverture du popover** (plus de seuil de 5 min). Non forcé : on respecte le
+  backoff d'un rate-limit 429 au lieu de marteler l'API.
+- **Footer épuré** : l'horodatage « dernière maj » est retiré (inutile) ; il ne reste que le
+  bouton ↻ et la version.
+- Un reset déjà passé n'affiche plus de valeur (au lieu du mot « reset » ambigu).
+
 ## 1.5.14 — 2026-09-26
 
 ### Ménage visuel du menu et du popover
