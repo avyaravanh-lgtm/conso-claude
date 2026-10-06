@@ -2,6 +2,18 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.18 — 2026-10-06
+
+### Passe de cohérence UI : tailles harmonisées
+- **Jauges uniformes** : toutes les barres font 8 px. Fin du spécial-cas « session » qui
+  agrandissait barre (10 px) et nombre (13 px) de façon non proportionnelle — source du
+  sentiment de tailles incohérentes.
+- **Échelle typo nette à 3 pas** : countdown 10 px · libellé 11 px · nombre 14 px (ratio ~1,27,
+  au lieu de 9,5 / 11 / 12 trop plat). Les nombres restants, plus lisibles, restent en
+  chiffres tabulaires (alignés).
+- La ligne « 5-hour session » se distingue par le **gras** du libellé (un seul axe
+  intentionnel), plus par des tailles ad hoc.
+
 ## 1.5.17 — 2026-10-06
 
 ### Popover épuré, barres plus grandes

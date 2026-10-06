@@ -315,10 +315,12 @@ body {
    repose popoverSize() (38 px/ligne) : si une ligne passe sur deux rangées, le total
    calculé est faux et le footer (↻ ✈︎ version) sort de body{overflow:hidden}. */
 .meta { margin-left:auto; display:flex; gap:7px; align-items:baseline; flex-shrink:0; }
-.reset { font-size:9.5px; font-variant-numeric:tabular-nums; white-space:nowrap;
+/* Échelle typo à 3 pas nets : countdown 10 · libellé 11 · nombre 14 (ratio ~1.27).
+   Même taille pour TOUTES les lignes — la session se distingue par le gras du libellé
+   (un seul axe), pas par des tailles ad hoc. */
+.reset { font-size:10px; font-variant-numeric:tabular-nums; white-space:nowrap;
   color: light-dark(rgba(20,18,15,.32), rgba(245,240,232,.35)); }
-.pct { font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; min-width:38px; text-align:right; }
-.session .pct { font-size:13px; }
+.pct { font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; min-width:40px; text-align:right; }
 .ok   { color:#d97757; } .warn { color:#e8940c; } .crit { color:#e5493a; }
 .bar {
   position:relative; height:8px; border-radius:4px; overflow:hidden;
@@ -326,7 +328,6 @@ body {
   background-image: linear-gradient(90deg, light-dark(rgba(20,18,15,.14), rgba(245,240,232,.16)) 1px, transparent 1px);
   background-size: 25% 100%;
 }
-.session .bar { height:10px; }
 .fill {
   position:absolute; top:0; bottom:0; left:0; width:0; border-radius:4px;
   transition: width .9s cubic-bezier(.16,1,.3,1);
