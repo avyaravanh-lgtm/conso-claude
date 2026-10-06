@@ -2,6 +2,28 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.16 — 2026-10-06
+
+### Jeton propre vraiment autonome : login OAuth avec `user:profile`
+- **Cause du repli permanent sur Claude Code en v1.5.15** : le jeton `setup-token` de Conso a le
+  scope `user:inference` **seul**, que `/oauth/usage` rejette en 429. L'app retombait donc toujours
+  sur le jeton emprunté à Claude Code — qui expire et laisse « Paused » dès que Claude Code n'a pas
+  tourné (données figées, pas de compte à rebours).
+- **Fix** : le login de Conso passe désormais par son **propre flux OAuth loopback** (le navigateur
+  revient tout seul sur `localhost`, **aucun copier/coller**) en demandant `user:inference
+  user:profile`. Prouvé le 06/10 de bout en bout : claude.ai accorde ces scopes au client_id
+  réutilisé, et le jeton obtenu (avec **refreshToken**, 8 h) passe `/oauth/usage` en **200**. Conso
+  le rafraîchit elle-même (`refreshConsoToken`) → vraiment autonome. Repli sur le collage de code
+  seulement si le serveur local ne démarre pas.
+- **Bonus** : on ne lance plus le gros CLI `claude` (fini la cascade de permissions macOS), et
+  plus aucune dépendance à Claude Code installé/connecté.
+- Le repli lecture-seule sur le jeton de Claude Code reste en filet (sur 429/401/403).
+- Code mort retiré (capture PTY de `setup-token`, `claudeCLIPath`, `extractOAuthToken`,
+  `showSignInHelp`).
+- **Dialogues** : textes simplifiés ; menu Édition ajouté (⌘V/⌘C marchent dans les champs d'une
+  app sans barre de menus) ; dialogue de collage (repli) rendu flottant pour rester atteignable
+  au-dessus du navigateur.
+
 ## 1.5.15 — 2026-10-05
 
 ### Fetch réparé : repli sur le jeton de Claude Code quand le nôtre est rejeté (429)

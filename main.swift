@@ -8,7 +8,6 @@ import WebKit
 import ServiceManagement
 import CryptoKit   // SHA256 pour le challenge PKCE du login indépendant
 import Network     // serveur loopback (retour du navigateur) du login indépendant
-import Darwin      // openpty/read/close : capturer la sortie de `claude setup-token`
 
 // MARK: - Données
 
@@ -74,13 +73,13 @@ let OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 let OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 let OAUTH_TOKEN_URL_ALT = "https://api.anthropic.com/v1/oauth/token"
 let OAUTH_AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize"
-// Scope : `user:inference` SEUL — copié à l'identique de l'URL que génère le vrai
-// `claude setup-token` (capturée le 25/09 en interceptant l'ouverture du navigateur).
-// C'est le flux « jeton long pour abonnement » = exactement l'usage de Conso. Un seul
-// scope = pas d'espace à encoder → notre URL est identique CARACTÈRE POUR CARACTÈRE à
-// celle du CLI. ⚠️ Ne PAS rallonger cette liste sans re-capturer : mes listes à 5-6
-// scopes (avec org:create_api_key, scope Console) faisaient échouer le callback.
-let OAUTH_SCOPES = "user:inference"
+// Scopes : `user:inference user:profile`. `user:profile` est INDISPENSABLE pour
+// `/oauth/usage` — sans lui (le cas du jeton `setup-token`, inference-only), l'endpoint
+// répond 429 (pas un vrai rate-limit : un scope manquant). Prouvé le 05/10 par sonde OAuth :
+// claude.ai ACCORDE ces deux scopes au client_id de Claude Code que Conso réutilise, et le
+// jeton obtenu passe l'usage en 200. ⚠️ NE PAS ajouter `org:create_api_key` (scope Console) :
+// c'est LUI qui faisait échouer le callback (confondu à tort avec « trop de scopes »).
+let OAUTH_SCOPES = "user:inference user:profile"
 let OAUTH_REDIRECT_MANUAL = "https://platform.claude.com/oauth/code/callback"
 // Cloudflare bloque certains User-Agent (erreur 1010) : on force celui du CLI.
 let OAUTH_USER_AGENT = "claude-cli/1.0 (external, cli)"
@@ -404,11 +403,13 @@ function sev(l) {
 }
 function countUp(el, v, delay, animate) {
   if (!animate) { el.textContent = v + ' %'; return; }
-  el.textContent = '0 %';
+  // On part de 100 % et on descend jusqu'à la valeur restante (cohérent avec la barre
+  // pleine qui se vide).
+  el.textContent = '100 %';
   const t0 = performance.now() + delay * 1000;
   function tick(t) {
     const p = Math.min(Math.max((t - t0) / 700, 0), 1);
-    el.textContent = Math.round(v * (1 - Math.pow(1 - p, 3))) + ' %';
+    el.textContent = Math.round(100 + (v - 100) * (1 - Math.pow(1 - p, 3))) + ' %';
     if (p < 1) requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
@@ -507,15 +508,23 @@ function render(d, animate) {
     rows.appendChild(row);
     const fill = row.querySelector('.fill');
     const pct = row.querySelector('.pct');
-    const w = Math.max(0, Math.min(l.percent, 100)) + '%';
+    // Barre = ce qui RESTE (comme l'icône « 96 % »), pas ce qui est consommé. Elle part
+    // pleine et se vide à mesure qu'on consomme. w = 100 − percent.
+    const w = Math.max(0, Math.min(100 - l.percent, 100)) + '%';
     if (animate) {
+      // « Barre pleine qui se vide » : on part à 100 % (sans transition) puis on draine
+      // jusqu'au restant avec la transition CSS.
+      fill.style.transition = 'none';
+      fill.style.width = '100%';
+      void fill.offsetWidth;                       // reflow : fige l'état plein
+      fill.style.transition = '';                  // rétablit la transition CSS (.9s)
       fill.style.transitionDelay = (i * 0.07) + 's';
-      requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = w; }));
+      fill.style.width = w;
     } else {
       fill.style.transition = 'none';
       fill.style.width = w;
     }
-    countUp(pct, l.percent, i * 0.07, animate);
+    countUp(pct, 100 - l.percent, i * 0.07, animate);
   });
   startTicker();
   // Le message d'erreur et le bloc de connexion ne coexistent pas : quand on
@@ -776,6 +785,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var loginTimeout: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Menu Édition minimal. Une app LSUIElement (barre de menus seule) n'a aucun menu,
+        // donc Cmd+V/C/X/A ne sont câblés nulle part : le champ « collez le code » du login
+        // refusait Cmd+V (seul le clic droit → Coller marchait). Ces items ne s'affichent pas
+        // (pas de barre de menus pour une accessory app) mais leurs raccourcis rejoignent le
+        // field editor via la chaîne de responders.
+        let mainMenu = NSMenu()
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu()
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+        NSApp.mainMenu = mainMenu
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "✳︎ …"
         statusItem.button?.target = self
@@ -842,24 +867,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(refreshItem)
         menu.addItem(.separator())
 
-        // Compte / jeton : une ligne d'état (non cliquable) puis les actions. Formulations
-        // resserrées, cadre positif (« Use Claude Code's token » plutôt que « Remove… »).
+        // Login : une seule action. Le jeton propre de Conso est désormais le seul mode
+        // (plus de ligne d'état ni de bascule « Use Claude Code's token » : un seul choix).
         let hasOwn = readCredsFrom(CONSO_KEYCHAIN, source: .own) != nil
-        let status = NSMenuItem(
-            title: hasOwn ? "Signed in — Conso's own token" : "Reading Claude Code's token",
-            action: nil, keyEquivalent: "")
-        status.isEnabled = false
-        menu.addItem(status)
         let signIn = NSMenuItem(title: hasOwn ? "Sign in again…" : "Sign in to Conso…",
                                 action: #selector(startLogin), keyEquivalent: "")
         signIn.target = self
         menu.addItem(signIn)
-        if hasOwn {
-            let useCC = NSMenuItem(title: "Use Claude Code's token instead",
-                                   action: #selector(signOutConso), keyEquivalent: "")
-            useCC.target = self
-            menu.addItem(useCC)
-        }
         menu.addItem(.separator())
 
         // Extras / réglages.
@@ -1121,26 +1135,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             try? SMAppService.mainApp.register()
         }
-    }
-
-    // MARK: Connexion — déléguée à Claude Code
-
-    // L'app ne fait PLUS le login OAuth elle-même (voir le commentaire en tête sur
-    // KEYCHAIN_SERVICE). Le menu « How to sign in… » explique simplement la marche à
-    // suivre : le login et le renouvellement du jeton appartiennent à Claude Code.
-    @objc func showSignInHelp() {
-        let alert = NSAlert()
-        alert.messageText = "Sign in with Claude Code"
-        alert.informativeText = "Conso Claude reads the token that Claude Code stores in your "
-            + "Keychain — it doesn't sign in on its own.\n\n"
-            + "• If you use Claude Code, run  claude auth login  in your terminal (or open the "
-            + "Claude Code app and sign in).\n"
-            + "• Then right-click the menu-bar icon → Refresh.\n\n"
-            + "The usage will appear on its own, and stay in sync as Claude Code refreshes the "
-            + "session."
-        alert.addButton(withTitle: "OK")
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
     }
 
     // Jeton présent mais inutilisable (expiré ou rejeté par l'API) : Claude Code le
@@ -1533,147 +1527,82 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Login indépendant de Conso (son propre jeton)
 
-    // On DÉLÈGUE au vrai CLI : `claude setup-token` fait le flux OAuth OFFICIEL (celui qui
-    // marche — le nôtre, à requête pourtant IDENTIQUE au caractère près, était refusé par
-    // claude.ai). Il crée un jeton LONGUE DURÉE, l'imprime sur sa sortie, sans toucher le
-    // Trousseau de Claude Code. On le capture et on le range dans NOTRE entrée. Zéro collage,
-    // flux navigateur officiel — le navigateur revient tout seul (loopback géré par le CLI).
+    // Conso fait SON propre login OAuth (flux manuel, collage de code) et range le jeton obtenu
+    // — avec son refreshToken — dans NOTRE entrée Trousseau (`CONSO_KEYCHAIN`), sans jamais
+    // toucher celle de Claude Code. Scopes `user:inference user:profile` → accès à /oauth/usage.
+    // Historique : on déléguait à `claude setup-token`, mais son jeton inference-only est rejeté
+    // en 429 par l'usage (découvert 05/10) ; le flux manuel récupère les bons scopes.
     @objc func startLogin() {
         if loggingIn { return }
         let info = NSAlert()
-        info.messageText = "Sign Conso in to Claude?"
-        info.informativeText = "Conso gets its own long-lived sign-in (through Claude Code's own "
-            + "setup-token flow) so the usage keeps updating even when Claude Code isn't running. "
-            + "Your browser opens once to approve. It never touches Claude Code's own login.\n\n"
-            + "This briefly runs Claude Code, so macOS may ask for a permission the first time. "
-            + "You only need to do this about once a year (the token is long-lived) — best not "
-            + "mid-game."
-        info.addButton(withTitle: "Sign in")
+        info.messageText = "Sign Conso in"
+        info.informativeText = "Your browser opens Claude. Just approve access — it signs in "
+            + "automatically."
+        info.addButton(withTitle: "Continue")
         info.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         guard info.runModal() == .alertFirstButtonReturn else { return }
+        // Flux LOOPBACK : le navigateur revient TOUT SEUL sur localhost, aucun copier/coller.
+        // Prouvé le 06/10 de bout en bout avec le scope user:inference user:profile. Le jeton
+        // obtenu a un refreshToken (8 h) que Conso rafraîchit elle-même via refreshConsoToken.
+        // Fini la délégation à `claude setup-token` (jeton inference-only → 429 sur /oauth/usage,
+        // + cascade de permissions macOS). Repli sur le collage de code seulement si le petit
+        // serveur local ne démarre pas.
+        loopbackLogin(verifier: randomToken(), state: randomToken())
+    }
 
-        guard let claudePath = Self.claudeCLIPath() else {
-            let a = NSAlert()
-            a.messageText = "Claude Code CLI not found"
-            a.informativeText = "Conso signs in through the `claude` command, which it couldn't find. "
-                + "Install / open Claude Code, then try again."
-            NSApp.activate(ignoringOtherApps: true)
-            a.runModal()
-            return
-        }
+    // Login loopback : démarre un petit serveur local, ouvre l'autorisation avec un redirect
+    // http://localhost:<port>/callback, et capte le retour du navigateur (code + state) sans
+    // aucune action manuelle de Monsieur. Repli sur pasteLogin si le serveur local ne démarre pas.
+    func loopbackLogin(verifier: String, state stateTok: String) {
         loggingIn = true
         state.needsLogin = false
-        state.error = "Opening Claude in your browser…"
-        updateStatusTitle()
-        if panel.isVisible { pushToWeb(animate: false); repositionPanel() }
-        oauthLog("login Conso: délégué à `claude setup-token`")
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: claudePath)
-            p.arguments = ["setup-token"]
-            // On donne au CLI un vrai PTY (pseudo-terminal). Sans terminal, `setup-token` se
-            // met en mode silencieux et n'imprime quasi rien (1 octet constaté) — donc pas le
-            // jeton. Avec un PTY, il se croit dans un terminal, imprime tout (dont le jeton) en
-            // ligne, et on lit sur le côté MAÎTRE. Le navigateur (lancé via LaunchServices)
-            // n'hérite pas de l'esclave → on reçoit bien l'EOF quand le CLI se termine.
-            var master: Int32 = 0, slave: Int32 = 0
-            guard openpty(&master, &slave, nil, nil, nil) == 0 else {
-                DispatchQueue.main.async { self.loginFailed("Couldn't prepare sign-in (pty).") }
+        let lb = OAuthLoopback()
+        loopback = lb
+        lb.start { [weak self] port in
+            guard let self = self else { return }
+            guard let port = port else {
+                oauthLog("loopback: démarrage KO (\(lb.lastStartError ?? "?")) → repli collage de code")
+                self.loopback = nil
+                self.pasteLogin(verifier: verifier, state: stateTok)
                 return
             }
-            let slaveHandle = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
-            p.standardOutput = slaveHandle
-            p.standardError = slaveHandle
-            p.standardInput = slaveHandle
-            var env = ProcessInfo.processInfo.environment
-            // PATH complet : le CLI a besoin de `open` pour lancer le navigateur.
-            env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin:" + (env["PATH"] ?? "")
-            env["TERM"] = env["TERM"] ?? "xterm-256color"
-            p.environment = env
-            do { try p.run() } catch {
-                close(master); close(slave)
-                DispatchQueue.main.async { self.loginFailed("Couldn't start `claude setup-token`.") }
-                return
-            }
-            close(slave)   // le parent n'a besoin que du maître ; l'enfant garde sa copie
-            // Filet : si personne n'autorise, on termine le CLI (→ EOF sur le maître).
-            let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: killer)
-            var acc = Data()
-            var found: String? = nil
-            var buf = [UInt8](repeating: 0, count: 4096)
-            while true {
-                let n = read(master, &buf, buf.count)
-                if n <= 0 { break }   // EOF (CLI terminé) ou erreur
-                acc.append(contentsOf: buf[0..<n])
-                if let t = Self.extractOAuthToken(String(decoding: acc, as: UTF8.self)) { found = t; break }
-            }
-            killer.cancel()
-            if p.isRunning { p.terminate() }
-            close(master)
-            p.waitUntilExit()
-            guard let token = found else {
-                oauthLog("setup-token: aucun jeton capturé (\(acc.count) o lus)")
-                DispatchQueue.main.async { self.loginFailed("Sign-in didn't return a token. Please try again.") }
-                return
-            }
-            // Jeton longue durée, SANS refreshToken. Expiration lointaine par défaut ; si elle
-            // est en réalité plus courte, un 401 fera simplement retomber sur le repli.
-            let full: [String: Any] = ["claudeAiOauth": [
-                "accessToken": token,
-                "expiresAt": (Date().timeIntervalSince1970 + 365 * 86400) * 1000,
-                "scopes": ["user:inference"],
-            ]]
-            let ok = self.writeConsoCreds(full)
-            oauthLog(ok ? "setup-token: jeton capturé, rangé dans l'entrée Conso" : "setup-token: échec écriture Trousseau")
-            DispatchQueue.main.async {
-                self.loggingIn = false
-                if ok {
-                    self.state.error = nil
-                    self.state.needsLogin = false
-                    self.refresh(force: true)
-                } else {
-                    self.loginFailed("Couldn't save the token to the Keychain.")
+            let redirect = "http://localhost:\(port)/callback"
+            lb.onResult = { [weak self] code, retState in
+                DispatchQueue.main.async {
+                    self?.completeLogin(code: code, returnedState: retState, verifier: verifier,
+                                        expectedState: stateTok, redirect: redirect)
                 }
             }
+            oauthLog("login Conso: loopback prêt sur le port \(port)")
+            self.state.error = "Opening Claude in your browser…"
+            if self.panel.isVisible { self.pushToWeb(animate: false); self.repositionPanel() }
+            self.openAuthorize(redirect: redirect, state: stateTok, challenge: pkceChallenge(verifier))
+            let timeout = DispatchWorkItem { [weak self] in self?.loginTimedOut() }
+            self.loginTimeout = timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + 300, execute: timeout)
         }
     }
 
-    // Chemin du binaire `claude` (une app .app n'hérite pas du PATH du shell).
-    static func claudeCLIPath() -> String? {
-        let candidates = ["/opt/homebrew/bin/claude", "/usr/local/bin/claude",
-                          "\(NSHomeDirectory())/.local/bin/claude", "/usr/bin/claude"]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
-
-    // Extrait un jeton OAuth longue durée (`sk-ant-oat…`) de la sortie de setup-token. Le CLI
-    // tourne dans un PTY et entoure sa sortie de codes ANSI (couleurs, spinner, curseur) : on
-    // les retire d'abord pour que le jeton ressorte propre et entier.
-    static func extractOAuthToken(_ raw: String) -> String? {
-        let s = raw.replacingOccurrences(
-            of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression)
-        guard let r = s.range(of: "sk-ant-oat[0-9A-Za-z._-]+", options: .regularExpression) else { return nil }
-        return String(s[r])
-    }
-
-    // Repli manuel (collage de code) — conservé au cas où, plus utilisé par défaut.
+    // Login de Conso : flux manuel (collage de code). Ouvre l'autorisation, récupère le code
+    // collé, l'échange contre un jeton propre (avec refreshToken) rangé dans CONSO_KEYCHAIN.
     func pasteLogin(verifier: String, state stateTok: String) {
         loggingIn = true
         state.needsLogin = false
         oauthLog("login Conso: flux hébergé (collage de code) — redirect=\(OAUTH_REDIRECT_MANUAL)")
         openAuthorize(redirect: OAUTH_REDIRECT_MANUAL, state: stateTok, challenge: pkceChallenge(verifier))
         let alert = NSAlert()
-        alert.messageText = "Sign in to Claude"
-        alert.informativeText = "Your browser opened the Claude authorization page. Approve access, "
-            + "copy the code shown, and paste it here."
+        alert.messageText = "Paste your code"
+        alert.informativeText = "Approve in your browser, then paste the code here (⌘V)."
         alert.addButton(withTitle: "Sign in")
         alert.addButton(withTitle: "Cancel")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        field.placeholderString = "Paste the code here"
+        field.placeholderString = "Code"
         alert.accessoryView = field
         NSApp.activate(ignoringOtherApps: true)
+        // Flottant : sinon le dialogue reste DERRIÈRE le navigateur (ARC) et devient
+        // inatteignable — il faut fermer le navigateur pour y accéder (constaté 06/10).
+        alert.window.level = .floating
         alert.window.initialFirstResponder = field
         let pasted = alert.runModal() == .alertFirstButtonReturn
             ? field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) : ""
