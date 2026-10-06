@@ -2,6 +2,14 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.17 — 2026-10-06
+
+### Popover épuré, barres plus grandes
+- **Footer retiré** (bouton ↻ et numéro de version) : tous deux faisaient doublon avec le menu
+  clic droit (en-tête « Conso Claude <version> » + action « Refresh »), et le popover se rafraîchit
+  déjà à chaque ouverture. L'espace récupéré va aux barres.
+- **Barres plus grandes** (8 px, 10 px pour la session) — plus lisibles d'un coup d'œil.
+
 ## 1.5.16 — 2026-10-06
 
 ### Jeton propre vraiment autonome : login OAuth avec `user:profile`

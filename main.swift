@@ -301,6 +301,8 @@ body {
   padding: 12px 14px 8px;
 }
 .row { margin-bottom: 12px; }
+/* Sans footer, la dernière ligne ne doit pas laisser un grand vide en bas. */
+#rows .row:last-child { margin-bottom: 2px; }
 .line { display:flex; align-items:baseline; margin-bottom:5px; }
 /* min-width:0 : sans lui, un flex item refuse de descendre sous la largeur de son
    contenu (min-width:auto par défaut) et l'ellipsis ne se déclenche jamais — le
@@ -319,14 +321,14 @@ body {
 .session .pct { font-size:13px; }
 .ok   { color:#d97757; } .warn { color:#e8940c; } .crit { color:#e5493a; }
 .bar {
-  position:relative; height:4px; border-radius:2.5px; overflow:hidden;
+  position:relative; height:8px; border-radius:4px; overflow:hidden;
   background: light-dark(rgba(20,18,15,.1), rgba(245,240,232,.12));
   background-image: linear-gradient(90deg, light-dark(rgba(20,18,15,.14), rgba(245,240,232,.16)) 1px, transparent 1px);
   background-size: 25% 100%;
 }
-.session .bar { height:5px; }
+.session .bar { height:10px; }
 .fill {
-  position:absolute; top:0; bottom:0; left:0; width:0; border-radius:3px;
+  position:absolute; top:0; bottom:0; left:0; width:0; border-radius:4px;
   transition: width .9s cubic-bezier(.16,1,.3,1);
 }
 /* Barres plates et nettes (pas de lueur : un widget de barre de menus reste calme). Le
@@ -361,18 +363,6 @@ body {
 #spk { margin:2px 0 4px; padding-top:10px; color: light-dark(rgba(20,18,15,.8), rgba(245,240,232,.8));
   border-top:.5px solid light-dark(rgba(20,18,15,.08), rgba(245,240,232,.09)); }
 .eta { color:#e8940c; }
-#foot { display:flex; align-items:center; gap:4px; margin-top:4px; padding-top:8px;
-  border-top:.5px solid light-dark(rgba(20,18,15,.08), rgba(245,240,232,.09)); }
-.btn { width:20px; height:18px; display:flex; align-items:center; justify-content:center;
-  border-radius:5px; color: light-dark(rgba(20,18,15,.35), rgba(245,240,232,.38));
-  transition: background .15s ease, color .15s ease; }
-.btn:hover { color: light-dark(rgba(20,18,15,.75), rgba(245,240,232,.8));
-  background: light-dark(rgba(20,18,15,.06), rgba(245,240,232,.08)); }
-.btn svg { width:12px; height:12px; transition: transform .12s ease; }
-.btn:active svg { transform: scale(.82); }
-#btn-r.spin svg { animation: rot .5s ease; }
-@keyframes rot { to { transform: rotate(360deg); } }
-#ver { margin-left:auto; font-size:9px; color: light-dark(rgba(20,18,15,.22), rgba(245,240,232,.25)); }
 /* Accessibilité : respecte « Augmenter le contraste » (Réglages > Accessibilité
    > Affichage). On densifie tous les gris uniquement si l'utilisateur l'a activé —
    le look discret reste par défaut. Booster #spk relève aussi le texte SVG du
@@ -389,10 +379,6 @@ body {
 <div id="err" hidden></div>
 <div id="login" hidden></div>
 <div id="spk" hidden></div>
-<div id="foot">
-  <div class="btn" id="btn-r" title="Refresh"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3"/></svg></div>
-  <span id="ver"></span>
-</div>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -541,7 +527,6 @@ function render(d, animate) {
   $('spk').innerHTML = sp;
   $('spk').hidden = !sp;
   $('spk').title = 'Usage per hour (last 24 h)';
-  $('ver').textContent = d.version ? 'v' + d.version : '';
   // La fenêtre native se dimensionne sur la hauteur RÉELLE du contenu, mesurée ici
   // après mise en page (rAF). Fini les hauteurs devinées à la main dans popoverSize()
   // qui coupaient le bas dès qu'un cas dépassait la supposition (prédiction, message
@@ -550,10 +535,6 @@ function render(d, animate) {
   requestAnimationFrame(() => post('h:' + Math.ceil(document.body.scrollHeight)));
 }
 const post = m => window.webkit.messageHandlers.act.postMessage(m);
-$('btn-r').addEventListener('click', () => {
-  $('btn-r').classList.remove('spin'); void $('btn-r').offsetWidth; $('btn-r').classList.add('spin');
-  post('refresh');
-});
 </script>
 </body></html>
 """#
