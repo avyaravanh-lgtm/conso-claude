@@ -265,18 +265,6 @@ func parseDate(_ s: String?) -> Date? {
     return isoParser.date(from: cleaned)
 }
 
-func fmtResetShort(_ d: Date?) -> String {
-    guard let d = d else { return "" }
-    let s = Int(d.timeIntervalSinceNow)
-    // Reset déjà passé → aucune durée à montrer. On renvoie vide plutôt que le mot
-    // « reset » (qui, affiché seul, ressemblait à un état normal alors qu'en pratique
-    // il ne survient qu'avec des données périmées, désormais signalées par le bandeau).
-    if s <= 0 { return "" }
-    let h = s / 3600, m = (s % 3600) / 60
-    if h >= 24 { return "\(h / 24) d \(h % 24) h" }
-    if h > 0 { return "\(h) h \(String(format: "%02d", m))" }
-    return "\(m) min"
-}
 
 func fmtResetFull(_ d: Date?) -> String {
     guard let d = d else { return "" }
@@ -307,7 +295,7 @@ body {
 /* min-width:0 : sans lui, un flex item refuse de descendre sous la largeur de son
    contenu (min-width:auto par défaut) et l'ellipsis ne se déclenche jamais — le
    libellé pousse alors la meta au lieu de se tronquer. */
-.label { font-size:11px; font-weight:500; color: light-dark(rgba(20,18,15,.6), rgba(245,240,232,.6));
+.label { font-size:11px; font-weight:500; color: light-dark(rgba(20,18,15,.68), rgba(245,240,232,.66));
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
 .session .label { font-weight:600; color: light-dark(rgba(20,18,15,.85), rgba(245,240,232,.9)); }
 /* flex-shrink:0 + nowrap : la meta (prédiction · reset · %) garde toujours UNE seule
@@ -315,12 +303,13 @@ body {
    repose popoverSize() (38 px/ligne) : si une ligne passe sur deux rangées, le total
    calculé est faux et le footer (↻ ✈︎ version) sort de body{overflow:hidden}. */
 .meta { margin-left:auto; display:flex; gap:7px; align-items:baseline; flex-shrink:0; }
-/* Échelle typo à 3 pas nets : countdown 10 · libellé 11 · nombre 14 (ratio ~1.27).
-   Même taille pour TOUTES les lignes — la session se distingue par le gras du libellé
-   (un seul axe), pas par des tailles ad hoc. */
-.reset { font-size:10px; font-variant-numeric:tabular-nums; white-space:nowrap;
-  color: light-dark(rgba(20,18,15,.32), rgba(245,240,232,.35)); }
-.pct { font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; min-width:40px; text-align:right; }
+/* Échelle typo : libellé ET countdown à 11 px — différenciés par la COULEUR, pas par un
+   écart d'1 px (invisible, et le countdown sous 11 px tombait sous le plancher de
+   légibilité). Le NOMBRE à 16 px est le seul vrai saut (~1.45×). Toutes les lignes à la
+   même taille ; la session se distingue par le gras du libellé. */
+.reset { font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap;
+  color: light-dark(rgba(20,18,15,.45), rgba(245,240,232,.48)); }
+.pct { font-size:16px; font-weight:700; font-variant-numeric:tabular-nums; min-width:46px; text-align:right; }
 .ok   { color:#d97757; } .warn { color:#e8940c; } .crit { color:#e5493a; }
 .bar {
   position:relative; height:8px; border-radius:4px; overflow:hidden;
@@ -389,14 +378,14 @@ function sev(l) {
   return 'ok';
 }
 function countUp(el, v, delay, animate) {
-  if (!animate) { el.textContent = v + ' %'; return; }
+  if (!animate) { el.textContent = v + '%'; return; }
   // On part de 100 % et on descend jusqu'à la valeur restante (cohérent avec la barre
   // pleine qui se vide).
-  el.textContent = '100 %';
+  el.textContent = '100%';
   const t0 = performance.now() + delay * 1000;
   function tick(t) {
     const p = Math.min(Math.max((t - t0) / 700, 0), 1);
-    el.textContent = Math.round(100 + (v - 100) * (1 - Math.pow(1 - p, 3))) + ' %';
+    el.textContent = Math.round(100 + (v - 100) * (1 - Math.pow(1 - p, 3))) + '%';
     if (p < 1) requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
@@ -405,7 +394,7 @@ function spark(points) {
   if (!points || points.length < 3) return '';
   const span = Math.max(...points.map(p => p.a));
   if (span < 1800) return '';  // < 30 min d'historique
-  const W = 220, H = 42;
+  const W = 220, H = 48;
   // Points en ordre chronologique (ancien -> récent).
   const pts = points.slice().sort((a, b) => b.a - a.a);
   // % consommés dans chacune des dernières heures : la dérivée du cumul.
@@ -426,7 +415,7 @@ function spark(points) {
   // gonflent pour remplir le graphe qu'au-delà de 20 %/h — le rythme qui
   // viderait une session entière (100 %) en 5 h, soit du plein régime.
   const scale = Math.max(peak, 20);
-  const baseY = H - 12, topY = 9, maxBarH = baseY - topY;  // 12px sous la ligne pour les heures
+  const baseY = H - 13, topY = 11, maxBarH = baseY - topY;  // marge haut (header 10px) + bas (heures 10px)
   const slot = W / hours, bw = Math.min(slot * 0.6, 26);
   const now = new Date();
   const step = Math.max(1, Math.round(hours / 4));  // ~4 repères d'heure
@@ -441,14 +430,14 @@ function spark(points) {
     if (j % step === 0) {
       const t = new Date(now.getTime() - (j + 0.5) * 3600 * 1000);
       const tx = Math.min(Math.max(cx, 8), W - 8);
-      ticks += '<text x="' + tx.toFixed(1) + '" y="' + (H - 2) + '" font-size="6.5" text-anchor="middle" ' +
-        'fill="currentColor" opacity=".62">' + String(t.getHours()).padStart(2, '0') + 'h</text>';
+      ticks += '<text x="' + tx.toFixed(1) + '" y="' + (H - 2) + '" font-size="10" text-anchor="middle" ' +
+        'fill="currentColor" opacity=".55">' + String(t.getHours()).padStart(2, '0') + 'h</text>';
     }
   }
   const cap = peak > 0 ? ' · PEAK ' + Math.round(peak) + '%/H' : '';
   return '<svg width="' + W + '" height="' + H + '" style="display:block">' +
     '<line x1="0" y1="' + baseY + '" x2="' + W + '" y2="' + baseY + '" stroke="currentColor" opacity=".15"/>' +
-    '<text x="1" y="7" font-size="7" fill="currentColor" opacity=".62" letter-spacing="1.2">USED / HOUR' + cap + '</text>' +
+    '<text x="1" y="9" font-size="10" fill="currentColor" opacity=".55" letter-spacing="1">USED / HOUR' + cap + '</text>' +
     bars + ticks + '</svg>';
 }
 // Compte à rebours VIVANT : à partir de l'epoch absolu du reset, on réaffiche chaque
@@ -463,7 +452,7 @@ function fmtCountdown(epoch) {
   const h = Math.floor(s / 3600); s -= h * 3600;
   const m = Math.floor(s / 60), sec = s - m * 60;
   const p = n => String(n).padStart(2, '0');
-  return (d > 0 ? d + 'j ' : '') + p(h) + ':' + p(m) + ':' + p(sec);
+  return (d > 0 ? d + 'd ' : '') + p(h) + ':' + p(m) + ':' + p(sec);
 }
 function startTicker() {
   if (_tick) { clearInterval(_tick); _tick = null; }
@@ -963,7 +952,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             limitsJSON.append([
                 "label": l.label,
                 "percent": l.percent,
-                "reset": fmtResetShort(l.resetsAt),
                 // Epoch absolu du reset : le popover en fait un compte à rebours VIVANT
                 // (ticker JS à la seconde), au lieu d'une valeur figée au dernier fetch.
                 "resetEpoch": l.resetsAt.map { Int($0.timeIntervalSince1970) } ?? 0,
@@ -1102,8 +1090,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func testPlane() {
         let demos: [(Int, String)] = [
             (52, "5-hour session"),
-            (25, "Weekly — all models"),
-            (10, "Weekly — Fable"),
+            (25, "Weekly · all models"),
+            (10, "Weekly · Fable"),
         ]
         let (remaining, context) = demos[testPlaneIdx % demos.count]
         testPlaneIdx += 1
@@ -1766,11 +1754,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             var label: String
             switch kind {
             case "session": label = "5-hour session"
-            case "weekly_all": label = "Weekly — all models"
+            case "weekly_all": label = "Weekly · all models"
             case "weekly_scoped":
                 let scope = l["scope"] as? [String: Any]
                 let model = scope?["model"] as? [String: Any]
-                label = "Weekly — \(model?["display_name"] as? String ?? "model")"
+                label = "Weekly · \(model?["display_name"] as? String ?? "model")"
             default: label = kind
             }
             limits.append(UsageLimit(
