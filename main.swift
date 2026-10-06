@@ -303,14 +303,17 @@ body {
    repose popoverSize() (38 px/ligne) : si une ligne passe sur deux rangées, le total
    calculé est faux et le footer (↻ ✈︎ version) sort de body{overflow:hidden}. */
 .meta { margin-left:auto; display:flex; gap:7px; align-items:baseline; flex-shrink:0; }
-/* Échelle typo : libellé ET countdown à 11 px — différenciés par la COULEUR, pas par un
-   écart d'1 px (invisible, et le countdown sous 11 px tombait sous le plancher de
-   légibilité). Le NOMBRE à 16 px est le seul vrai saut (~1.45×). Toutes les lignes à la
-   même taille ; la session se distingue par le gras du libellé. */
-.reset { font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap;
+/* Échelle COMPACTE et cohérente : nombre 13 (repère principal) · libellé 11 · countdown 10
+   (secondaire, différencié du libellé par la couleur) · sparkline 8. Un widget de barre de
+   menus reste discret — on ne gonfle pas. La session se distingue par le gras du libellé. */
+.reset { font-size:10px; font-variant-numeric:tabular-nums; white-space:nowrap;
   color: light-dark(rgba(20,18,15,.45), rgba(245,240,232,.48)); }
-.pct { font-size:16px; font-weight:700; font-variant-numeric:tabular-nums; min-width:46px; text-align:right; }
-.ok   { color:#d97757; } .warn { color:#e8940c; } .crit { color:#e5493a; }
+.pct { font-size:13px; font-weight:700; font-variant-numeric:tabular-nums; min-width:42px; text-align:right; }
+/* Sobre : le NOMBRE reste NEUTRE quand tout va bien ; la couleur n'apparaît que pour
+   signaler (warn/crit). La couleur est du signal, pas de la décoration — l'accent se
+   garde pour le moment où il faut regarder. La barre, elle, porte le coral de marque. */
+.ok   { color: light-dark(rgba(20,18,15,.85), rgba(245,240,232,.9)); }
+.warn { color:#e8940c; } .crit { color:#e5493a; }
 .bar {
   position:relative; height:8px; border-radius:4px; overflow:hidden;
   background: light-dark(rgba(20,18,15,.1), rgba(245,240,232,.12));
@@ -394,7 +397,7 @@ function spark(points) {
   if (!points || points.length < 3) return '';
   const span = Math.max(...points.map(p => p.a));
   if (span < 1800) return '';  // < 30 min d'historique
-  const W = 220, H = 48;
+  const W = 220, H = 42;
   // Points en ordre chronologique (ancien -> récent).
   const pts = points.slice().sort((a, b) => b.a - a.a);
   // % consommés dans chacune des dernières heures : la dérivée du cumul.
@@ -415,7 +418,7 @@ function spark(points) {
   // gonflent pour remplir le graphe qu'au-delà de 20 %/h — le rythme qui
   // viderait une session entière (100 %) en 5 h, soit du plein régime.
   const scale = Math.max(peak, 20);
-  const baseY = H - 13, topY = 11, maxBarH = baseY - topY;  // marge haut (header 10px) + bas (heures 10px)
+  const baseY = H - 12, topY = 9, maxBarH = baseY - topY;  // marge haut (header) + bas (heures)
   const slot = W / hours, bw = Math.min(slot * 0.6, 26);
   const now = new Date();
   const step = Math.max(1, Math.round(hours / 4));  // ~4 repères d'heure
@@ -430,14 +433,14 @@ function spark(points) {
     if (j % step === 0) {
       const t = new Date(now.getTime() - (j + 0.5) * 3600 * 1000);
       const tx = Math.min(Math.max(cx, 8), W - 8);
-      ticks += '<text x="' + tx.toFixed(1) + '" y="' + (H - 2) + '" font-size="10" text-anchor="middle" ' +
+      ticks += '<text x="' + tx.toFixed(1) + '" y="' + (H - 2) + '" font-size="8" text-anchor="middle" ' +
         'fill="currentColor" opacity=".55">' + String(t.getHours()).padStart(2, '0') + 'h</text>';
     }
   }
   const cap = peak > 0 ? ' · PEAK ' + Math.round(peak) + '%/H' : '';
   return '<svg width="' + W + '" height="' + H + '" style="display:block">' +
     '<line x1="0" y1="' + baseY + '" x2="' + W + '" y2="' + baseY + '" stroke="currentColor" opacity=".15"/>' +
-    '<text x="1" y="9" font-size="10" fill="currentColor" opacity=".55" letter-spacing="1">USED / HOUR' + cap + '</text>' +
+    '<text x="1" y="7" font-size="8" fill="currentColor" opacity=".55" letter-spacing="1">USED / HOUR' + cap + '</text>' +
     bars + ticks + '</svg>';
 }
 // Compte à rebours VIVANT : à partir de l'epoch absolu du reset, on réaffiche chaque
@@ -452,7 +455,10 @@ function fmtCountdown(epoch) {
   const h = Math.floor(s / 3600); s -= h * 3600;
   const m = Math.floor(s / 60), sec = s - m * 60;
   const p = n => String(n).padStart(2, '0');
-  return (d > 0 ? d + 'd ' : '') + p(h) + ':' + p(m) + ':' + p(sec);
+  // ≥ 1 jour : « 6d 15h », pas de secondes (inutile si loin, et bien plus court → le libellé
+  // n'est plus tronqué). < 1 jour : HH:MM:SS vivant (la session, qu'on regarde vraiment).
+  if (d > 0) return d + 'd ' + h + 'h';
+  return p(h) + ':' + p(m) + ':' + p(sec);
 }
 function startTicker() {
   if (_tick) { clearInterval(_tick); _tick = null; }

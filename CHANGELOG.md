@@ -2,6 +2,20 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.20 — 2026-10-06
+
+### Sobre et élégant : compact, et la couleur devient du signal
+La v1.5.19 avait sur-grossi (tout agrandi, et le libellé « Weekly · all models » se tronquait).
+Correction vers le compact et le sobre.
+- **Échelle recompactée** : nombre **13 px** · libellé **11 px** · countdown **10 px** ·
+  sparkline **8 px** (au lieu de 16 / 11 / 11 / 10). Un widget de barre de menus reste discret.
+- **Countdown multi-jours en « 6d 14h »** (plus de secondes égrenées 6 jours à l'avance, inutiles
+  et larges) — c'est ce qui **tronquait le libellé**. Le live `HH:MM:SS` reste pour la session
+  (< 1 jour), qu'on regarde vraiment.
+- **La couleur devient du SIGNAL, pas de la décoration** : le nombre reste **neutre** quand tout
+  va bien, et ne passe en **ambre / rouge** que pour alerter (warn / crit). Les alertes ressortent
+  enfin, et le popover au repos est calme. La barre garde le coral de marque.
+
 ## 1.5.19 — 2026-10-06
 
 ### Vraie passe UI/UX (audit skill + détecteur) : échelle typo cohérente
