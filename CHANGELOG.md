@@ -2,6 +2,23 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.19 — 2026-10-06
+
+### Vraie passe UI/UX (audit skill + détecteur) : échelle typo cohérente
+Audit en double évaluation (revue design indépendante + détecteur automatique). Score heuristique
+28/40, findings du détecteur : 7 → 4 (les restants sont l'anim de `width`, compromis assumé, et
+la palette « cream », faux positif car c'est l'identité Claude).
+- **Échelle typo nette** : nombre **16 px** (le seul vrai saut, ~1,45×) · libellé **11 px** ·
+  countdown **11 px** (différencié du libellé par la couleur, plus par un écart d'1 px invisible)
+  · sparkline **10 px**. Fin des 6 paliers incohérents (6,5 / 7 / 10 / 11 / 12 / 14), dont du
+  texte **sous le plancher de légibilité de 11 px**.
+- **Countdown plus lisible** (11 px, contraste relevé) — c'est le repère « vivant ».
+- **Locale corrigée** dans une UI anglaise : `6d` (plus `6j`), `93%` (plus `93 %`, désormais
+  cohérent avec `PEAK 1%/H`).
+- **Libellés** : point médian au lieu du tiret cadratin (`Weekly · all models`).
+- Barres de restant conservées ; sparkline conservée avec texte agrandi (choix de Monsieur).
+- Code mort retiré (`fmtResetShort` + champ `reset`, qui dérivait du compte à rebours réel).
+
 ## 1.5.18 — 2026-10-06
 
 ### Passe de cohérence UI : tailles harmonisées
