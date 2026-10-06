@@ -303,12 +303,12 @@ body {
    repose popoverSize() (38 px/ligne) : si une ligne passe sur deux rangées, le total
    calculé est faux et le footer (↻ ✈︎ version) sort de body{overflow:hidden}. */
 .meta { margin-left:auto; display:flex; gap:7px; align-items:baseline; flex-shrink:0; }
-/* Échelle COMPACTE et cohérente : nombre 13 (repère principal) · libellé 11 · countdown 10
-   (secondaire, différencié du libellé par la couleur) · sparkline 8. Un widget de barre de
-   menus reste discret — on ne gonfle pas. La session se distingue par le gras du libellé. */
+/* Échelle très sobre : le NOMBRE est à la MÊME taille que le titre (11px) — il se distingue
+   par la graisse (600), la position (à droite) et la couleur d'alerte, pas par la taille.
+   libellé 11 · countdown 10 · sparkline 8. On ne gonfle rien. */
 .reset { font-size:10px; font-variant-numeric:tabular-nums; white-space:nowrap;
   color: light-dark(rgba(20,18,15,.45), rgba(245,240,232,.48)); }
-.pct { font-size:13px; font-weight:700; font-variant-numeric:tabular-nums; min-width:42px; text-align:right; }
+.pct { font-size:11px; font-weight:600; font-variant-numeric:tabular-nums; min-width:34px; text-align:right; }
 /* Sobre : le NOMBRE reste NEUTRE quand tout va bien ; la couleur n'apparaît que pour
    signaler (warn/crit). La couleur est du signal, pas de la décoration — l'accent se
    garde pour le moment où il faut regarder. La barre, elle, porte le coral de marque. */

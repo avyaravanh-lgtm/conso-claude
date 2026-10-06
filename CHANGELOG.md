@@ -2,6 +2,14 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.5.21 — 2026-10-06
+
+### Encore plus sobre : le nombre à la taille du titre
+- Le **% passe à 11 px** (la taille du titre « 5-hour session »), au lieu de 13. Il ne domine
+  plus le libellé et le countdown : il se distingue par la **graisse** (600), la **position**
+  (à droite) et la **couleur d'alerte**, pas par la taille. Tout le popover tient sur un registre
+  typographique calme (libellé 11 · countdown 10 · sparkline 8).
+
 ## 1.5.20 — 2026-10-06
 
 ### Sobre et élégant : compact, et la couleur devient du signal
