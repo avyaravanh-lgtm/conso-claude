@@ -2,6 +2,11 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.6.1 — 2026-10-08
+
+### Jauges plus fines
+- Les barres passent de 8 px à **5 px** — plus délicates, dans l'esprit sobre des menus natifs.
+
 ## 1.6.0 — 2026-10-07
 
 ### DA des menus natifs macOS
