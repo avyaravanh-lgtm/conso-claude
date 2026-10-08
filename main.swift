@@ -317,13 +317,13 @@ body {
 .ok   { color: light-dark(rgba(0,0,0,.88), rgba(255,255,255,.92)); }
 .warn { color:#e8940c; } .crit { color:#e5493a; }
 .bar {
-  position:relative; height:8px; border-radius:4px; overflow:hidden;
+  position:relative; height:5px; border-radius:2.5px; overflow:hidden;
   background: light-dark(rgba(0,0,0,.08), rgba(255,255,255,.14));
   background-image: linear-gradient(90deg, light-dark(rgba(0,0,0,.1), rgba(255,255,255,.18)) 1px, transparent 1px);
   background-size: 25% 100%;
 }
 .fill {
-  position:absolute; top:0; bottom:0; left:0; width:0; border-radius:4px;
+  position:absolute; top:0; bottom:0; left:0; width:0; border-radius:2.5px;
   transition: width .9s cubic-bezier(.16,1,.3,1);
 }
 /* Barres plates et nettes (pas de lueur : un widget de barre de menus reste calme). Le
