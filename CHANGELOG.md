@@ -2,6 +2,19 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.6.0 — 2026-10-07
+
+### DA des menus natifs macOS
+Le popover adopte la direction artistique des menus natifs (menu Batterie, Wi-Fi…).
+- **Fond vibrant** : matériau `.menu` (NSVisualEffectView, flou derrière la fenêtre) à la place
+  du fond crème opaque. Coins arrondis façon menu (~11 px), **ombre native** portée par la fenêtre.
+  (On avait renoncé au vibrant à cause d'un léger reflet de fond au coin ; c'est inhérent aux
+  menus natifs et désormais voulu.)
+- **Couleurs système** : texte en neutres (noir/gris façon `labelColor`), fini la teinte crème.
+  La couleur ne sort que pour alerter (ambre/rouge). **Les jauges gardent l'orange de marque.**
+- **En-tête « USED / HOUR »** : même police, graisse et couleur que les titres de ligne (sorti du
+  SVG, rendu en vrai élément de titre) et aligné à gauche sur eux.
+
 ## 1.5.21 — 2026-10-06
 
 ### Encore plus sobre : le nombre à la taille du titre

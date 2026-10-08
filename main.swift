@@ -282,10 +282,12 @@ let POPOVER_HTML = #"""
 <!doctype html><html><head><meta charset="utf-8"><style>
 :root { color-scheme: light dark; }
 * { margin:0; padding:0; box-sizing:border-box; -webkit-user-select:none; cursor:default; }
-html,body { background: light-dark(#f5f0e8, #201d19); overflow:hidden; }
+/* Fond TRANSPARENT : la DA suit les menus natifs macOS — c'est le matériau vibrant
+   `.menu` (NSVisualEffectView, posé côté Swift) qui passe derrière, pas une couleur peinte. */
+html,body { background: transparent; overflow:hidden; }
 body {
   font: 12px/1.4 -apple-system, "SF Pro Text", sans-serif;
-  color: light-dark(rgba(20,18,15,.88), rgba(245,240,232,.92));
+  color: light-dark(rgba(0,0,0,.85), rgba(255,255,255,.9));   /* labelColor système, pas de teinte */
   padding: 12px 14px 8px;
 }
 .row { margin-bottom: 12px; }
@@ -295,29 +297,29 @@ body {
 /* min-width:0 : sans lui, un flex item refuse de descendre sous la largeur de son
    contenu (min-width:auto par défaut) et l'ellipsis ne se déclenche jamais — le
    libellé pousse alors la meta au lieu de se tronquer. */
-.label { font-size:11px; font-weight:500; color: light-dark(rgba(20,18,15,.68), rgba(245,240,232,.66));
+.label { font-size:10px; font-weight:500; color: light-dark(rgba(0,0,0,.82), rgba(255,255,255,.85));
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
-.session .label { font-weight:600; color: light-dark(rgba(20,18,15,.85), rgba(245,240,232,.9)); }
+.session .label { font-weight:600; color: light-dark(rgba(0,0,0,.92), rgba(255,255,255,.95)); }
 /* flex-shrink:0 + nowrap : la meta (prédiction · reset · %) garde toujours UNE seule
    ligne. Le libellé absorbe tout le rétrécissement. C'est l'invariant sur lequel
    repose popoverSize() (38 px/ligne) : si une ligne passe sur deux rangées, le total
    calculé est faux et le footer (↻ ✈︎ version) sort de body{overflow:hidden}. */
 .meta { margin-left:auto; display:flex; gap:7px; align-items:baseline; flex-shrink:0; }
-/* Échelle très sobre : le NOMBRE est à la MÊME taille que le titre (11px) — il se distingue
+/* Échelle très sobre : titre et nombre à la MÊME taille (10px), le nombre se distinguant
    par la graisse (600), la position (à droite) et la couleur d'alerte, pas par la taille.
-   libellé 11 · countdown 10 · sparkline 8. On ne gonfle rien. */
+   countdown 10 · sparkline 8. Discrétion maximale. */
 .reset { font-size:10px; font-variant-numeric:tabular-nums; white-space:nowrap;
-  color: light-dark(rgba(20,18,15,.45), rgba(245,240,232,.48)); }
-.pct { font-size:11px; font-weight:600; font-variant-numeric:tabular-nums; min-width:34px; text-align:right; }
+  color: light-dark(rgba(0,0,0,.5), rgba(255,255,255,.52)); }   /* secondaryLabelColor */
+.pct { font-size:10px; font-weight:600; font-variant-numeric:tabular-nums; min-width:30px; text-align:right; }
 /* Sobre : le NOMBRE reste NEUTRE quand tout va bien ; la couleur n'apparaît que pour
    signaler (warn/crit). La couleur est du signal, pas de la décoration — l'accent se
    garde pour le moment où il faut regarder. La barre, elle, porte le coral de marque. */
-.ok   { color: light-dark(rgba(20,18,15,.85), rgba(245,240,232,.9)); }
+.ok   { color: light-dark(rgba(0,0,0,.88), rgba(255,255,255,.92)); }
 .warn { color:#e8940c; } .crit { color:#e5493a; }
 .bar {
   position:relative; height:8px; border-radius:4px; overflow:hidden;
-  background: light-dark(rgba(20,18,15,.1), rgba(245,240,232,.12));
-  background-image: linear-gradient(90deg, light-dark(rgba(20,18,15,.14), rgba(245,240,232,.16)) 1px, transparent 1px);
+  background: light-dark(rgba(0,0,0,.08), rgba(255,255,255,.14));
+  background-image: linear-gradient(90deg, light-dark(rgba(0,0,0,.1), rgba(255,255,255,.18)) 1px, transparent 1px);
   background-size: 25% 100%;
 }
 .fill {
@@ -338,34 +340,37 @@ body {
 #err { font-size:10px; color:#e8940c; margin:-4px 0 8px; }
 /* Attente bénigne (jeton expiré → Conso attend Claude Code, ≈ chaque soir) : gris
    discret, jamais l'orange d'alerte — ce n'est pas une panne. */
-#err.calm { color: light-dark(rgba(20,18,15,.4), rgba(245,240,232,.42)); }
+#err.calm { color: light-dark(rgba(0,0,0,.45), rgba(255,255,255,.5)); }
 /* Bloc d'INFO (pas un bouton) : l'app ne fait plus le login elle-même — elle est
    lectrice du jeton de Claude Code. On renvoie donc vers Claude Code / `claude auth
    login` au lieu d'ouvrir un navigateur. */
 #login { display:block; margin:2px 0 8px; padding:8px 10px; border-radius:8px;
   font:12px/1.4 -apple-system; text-align:left;
-  color: light-dark(rgba(20,18,15,.82), rgba(245,240,232,.85));
-  background: light-dark(rgba(20,18,15,.05), rgba(245,240,232,.06));
-  border:.5px solid light-dark(rgba(20,18,15,.09), rgba(245,240,232,.1)); }
+  color: light-dark(rgba(0,0,0,.82), rgba(255,255,255,.85));
+  background: light-dark(rgba(0,0,0,.05), rgba(255,255,255,.07));
+  border:.5px solid light-dark(rgba(0,0,0,.1), rgba(255,255,255,.12)); }
 /* Sans ça, `#login { display:block }` bat l'attribut [hidden] (spécificité id >
    attribut) et le bloc reste TOUJOURS visible, même needsLogin=false. */
 #login[hidden] { display:none; }
 #login b { font-weight:600; }
 #login code { font:11px ui-monospace, Menlo, monospace; padding:1px 4px; border-radius:4px;
-  background: light-dark(rgba(20,18,15,.07), rgba(245,240,232,.09)); }
-#spk { margin:2px 0 4px; padding-top:10px; color: light-dark(rgba(20,18,15,.8), rgba(245,240,232,.8));
-  border-top:.5px solid light-dark(rgba(20,18,15,.08), rgba(245,240,232,.09)); }
+  background: light-dark(rgba(0,0,0,.07), rgba(255,255,255,.1)); }
+#spk { margin:2px 0 4px; padding-top:10px; color: light-dark(rgba(0,0,0,.55), rgba(255,255,255,.6));
+  border-top:.5px solid light-dark(rgba(0,0,0,.12), rgba(255,255,255,.16)); }   /* séparateur façon menu natif */
+/* En-tête de la sparkline : MÊME police / graisse / couleur que les titres de ligne (.label). */
+.spk-head { font-size:10px; font-weight:500; color: light-dark(rgba(0,0,0,.82), rgba(255,255,255,.85));
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:8px; }
 .eta { color:#e8940c; }
 /* Accessibilité : respecte « Augmenter le contraste » (Réglages > Accessibilité
    > Affichage). On densifie tous les gris uniquement si l'utilisateur l'a activé —
    le look discret reste par défaut. Booster #spk relève aussi le texte SVG du
    graphe (fill=currentColor). */
 @media (prefers-contrast: more) {
-  body { color: light-dark(rgba(20,18,15,.98), rgba(245,240,232,1)); }
-  .label { color: light-dark(rgba(20,18,15,.82), rgba(245,240,232,.82)); }
-  .session .label { color: light-dark(rgba(20,18,15,1), rgba(245,240,232,1)); }
-  .reset { color: light-dark(rgba(20,18,15,.6), rgba(245,240,232,.62)); }
-  #spk { color: light-dark(rgba(20,18,15,1), rgba(245,240,232,1)); }
+  body { color: light-dark(rgba(0,0,0,.98), rgba(255,255,255,1)); }
+  .label { color: light-dark(rgba(0,0,0,.85), rgba(255,255,255,.85)); }
+  .session .label { color: light-dark(rgba(0,0,0,1), rgba(255,255,255,1)); }
+  .reset { color: light-dark(rgba(0,0,0,.62), rgba(255,255,255,.64)); }
+  #spk { color: light-dark(rgba(0,0,0,1), rgba(255,255,255,1)); }
 }
 </style></head><body>
 <div id="rows"></div>
@@ -397,7 +402,7 @@ function spark(points) {
   if (!points || points.length < 3) return '';
   const span = Math.max(...points.map(p => p.a));
   if (span < 1800) return '';  // < 30 min d'historique
-  const W = 220, H = 42;
+  const W = 220, H = 34;   // header sorti du SVG → graphe plus bas
   // Points en ordre chronologique (ancien -> récent).
   const pts = points.slice().sort((a, b) => b.a - a.a);
   // % consommés dans chacune des dernières heures : la dérivée du cumul.
@@ -418,7 +423,7 @@ function spark(points) {
   // gonflent pour remplir le graphe qu'au-delà de 20 %/h — le rythme qui
   // viderait une session entière (100 %) en 5 h, soit du plein régime.
   const scale = Math.max(peak, 20);
-  const baseY = H - 12, topY = 9, maxBarH = baseY - topY;  // marge haut (header) + bas (heures)
+  const baseY = H - 12, topY = 4, maxBarH = baseY - topY;  // plus de header interne ; bas (heures)
   const slot = W / hours, bw = Math.min(slot * 0.6, 26);
   const now = new Date();
   const step = Math.max(1, Math.round(hours / 4));  // ~4 repères d'heure
@@ -438,9 +443,11 @@ function spark(points) {
     }
   }
   const cap = peak > 0 ? ' · PEAK ' + Math.round(peak) + '%/H' : '';
-  return '<svg width="' + W + '" height="' + H + '" style="display:block">' +
+  // En-tête HORS du SVG : vrai élément HTML stylé comme un TITRE de ligne (même police,
+  // graisse et couleur que .label). C'est l'« alignement » voulu, pas juste le bord gauche.
+  return '<div class="spk-head">USED / HOUR' + cap + '</div>' +
+    '<svg width="' + W + '" height="' + H + '" style="display:block">' +
     '<line x1="0" y1="' + baseY + '" x2="' + W + '" y2="' + baseY + '" stroke="currentColor" opacity=".15"/>' +
-    '<text x="1" y="7" font-size="8" fill="currentColor" opacity=".55" letter-spacing="1">USED / HOUR' + cap + '</text>' +
     bars + ticks + '</svg>';
 }
 // Compte à rebours VIVANT : à partir de l'epoch absolu du reset, on réaffiche chaque
@@ -566,22 +573,27 @@ final class WebPopover: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         if ready { webView.evaluateJavaScript(js) } else { pendingJS = js }
     }
 
-    /// Vue de contenu du popover : carte arrondie **opaque**. On a abandonné le
-    /// Liquid Glass (NSGlassEffectView) ET le matériau frosté (NSVisualEffectView) :
-    /// tous deux laissaient transparaître/refléter le fond derrière la fenêtre, ce
-    /// qui produisait un glint coloré au coin haut-gauche (ex. un onglet vert
-    /// derrière → coin verdâtre). Un fond solide (couleur adaptative peinte par le
-    /// HTML) garantit un rendu net et identique sur n'importe quel fond. Les coins
-    /// arrondis (squircle continu) viennent du masque de calque de la web view, et
-    /// une hairline discrète détache la carte des fonds clairs.
+    /// Vue de contenu : DA des **menus natifs macOS**. Matériau vibrant `.menu`
+    /// (NSVisualEffectView, flou derrière-fenêtre) sous une web view TRANSPARENTE qui
+    /// ne peint que le texte et les jauges (orange). Coins arrondis façon menu (~11 px),
+    /// hairline très discrète, l'ombre native portée par la fenêtre.
+    /// NB historique : on avait renoncé au vibrant pour un fond opaque à cause d'un léger
+    /// glint coloré au coin (reflet du fond) ; c'est inhérent aux menus natifs et voulu ici.
     func contentView() -> NSView {
-        webView.wantsLayer = true
-        webView.layer?.cornerRadius = 16
-        webView.layer?.cornerCurve = .continuous
-        webView.layer?.masksToBounds = true
-        webView.layer?.borderWidth = 0.5
-        webView.layer?.borderColor = NSColor(white: 0.5, alpha: 0.22).cgColor
-        return webView
+        let vev = NSVisualEffectView(frame: webView.frame)
+        vev.material = .menu
+        vev.blendingMode = .behindWindow
+        vev.state = .active
+        vev.wantsLayer = true
+        vev.layer?.cornerRadius = 11
+        vev.layer?.cornerCurve = .continuous
+        vev.layer?.masksToBounds = true
+        vev.layer?.borderWidth = 0.5
+        vev.layer?.borderColor = NSColor(white: 0.5, alpha: 0.18).cgColor
+        webView.frame = vev.bounds
+        webView.autoresizingMask = [.width, .height]
+        vev.addSubview(webView)
+        return vev
     }
 }
 
@@ -786,9 +798,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        // L'ombre de fenêtre serait rectangulaire (forme du cadre, pas du verre) :
-        // on la coupe et on laisse le NSGlassEffectView porter sa propre ombre arrondie.
-        panel.hasShadow = false
+        // Ombre native de la fenêtre : avec un fond vibrant masqué en coins arrondis,
+        // macOS porte une ombre qui épouse la carte — comme un menu natif.
+        panel.hasShadow = true
         panel.level = .popUpMenu
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .utilityWindow
