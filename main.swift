@@ -1823,33 +1823,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // Rasterise un titre de barre de menus en image. Une image TEMPLATE est teintée
+    // et atténuée par AppKit exactement comme les extras natifs (batterie, horloge) :
+    // elle suit l'état actif/inactif de la barre au lieu de rester en blanc opaque.
+    // Une image colorée (template = false) garde sa couleur — réservé aux alertes.
+    private func statusImage(from attr: NSAttributedString, template: Bool) -> NSImage {
+        let size = attr.size()
+        let img = NSImage(
+            size: NSSize(width: ceil(size.width), height: ceil(size.height)), flipped: false
+        ) { rect in
+            attr.draw(in: rect)
+            return true
+        }
+        img.isTemplate = template
+        return img
+    }
+
     func updateStatusTitle() {
+        guard let button = statusItem.button else { return }
         if state.limits.isEmpty {
             if state.error != nil {
-                statusItem.button?.attributedTitle = NSAttributedString(
+                button.image = nil
+                button.imagePosition = .noImage
+                button.attributedTitle = NSAttributedString(
                     string: "✳︎ !", attributes: [.foregroundColor: NSColor.systemOrange])
             }
             return
         }
         guard let session = state.limits.first(where: { $0.isSession }) else { return }
         // On affiche le % RESTANT (100 − consommé), cohérent avec l'avion (« il te reste X % »).
-        // Pas de dégradé de couleur : blanc (labelColor) tout du long, rouge seulement à ≤ 10 %.
+        // Pas de dégradé de couleur : teinte système tout du long, rouge seulement à ≤ 10 %.
         let remaining = 100 - session.percent
         let crit = remaining <= 10
-        let accent: NSColor = crit ? .systemRed : .labelColor
         // Même taille que les autres extras du menu bar (batterie, etc.) : ~11pt, poids regular.
         // Mesuré : la batterie rend plus petit que systemFontSize (13pt) → smallSystemFontSize.
         // On ne passe en gras que dans le rouge (≤ 10 %), pour attirer l'œil.
         let barSize = NSFont.smallSystemFontSize
+        // En mode normal on peint en NOIR opaque : l'image template ignore la couleur et
+        // n'utilise que l'alpha, qu'AppKit teinte comme la barre (donc atténuée à l'état
+        // inactif, comme les natifs). En critique, image colorée rouge et non template,
+        // pour que l'alerte reste vive.
+        let glyph: NSColor = crit ? .systemRed : .black
         let title = NSMutableAttributedString(string: "✳︎ ", attributes: [
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: glyph,
             .font: NSFont.systemFont(ofSize: barSize),
         ])
         title.append(NSAttributedString(string: "\(remaining) %", attributes: [
-            .foregroundColor: accent,
+            .foregroundColor: glyph,
             .font: NSFont.monospacedDigitSystemFont(ofSize: barSize, weight: crit ? .bold : .regular),
         ]))
-        statusItem.button?.attributedTitle = title
+        button.image = statusImage(from: title, template: !crit)
+        button.imagePosition = .imageOnly
+        button.attributedTitle = NSAttributedString(string: "")
     }
 }
 
