@@ -2,6 +2,14 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.6.2 — 2026-10-26
+
+### Le nombre s'atténue comme les icônes natives
+- Le titre de la barre de menus (« ✳︎ 21 % ») est désormais rendu en **image template** :
+  macOS le teinte et l'atténue comme les extras natifs (batterie, horloge). Avant, le nombre
+  était peint en blanc opaque et **restait plus clair** que ses voisins quand la barre passait
+  à son état atténué. Le rouge d'alerte (≤ 10 %) reste vif, c'est voulu.
+
 ## 1.6.1 — 2026-10-08
 
 ### Jauges plus fines
