@@ -2,6 +2,18 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.6.3 — 2026-11-02
+
+### La barre suit la limite principale (fin des 5 h)
+Anthropic a retiré la limite de session (5 h) ; l'API `/oauth/usage` ne renvoie plus de
+`kind: "session"`. La barre de menus se calait dessus et **restait figée** sur sa dernière
+valeur.
+- La barre, l'historique (sparkline) et l'avion de seuil suivent désormais la **limite
+  principale** : la session si l'API la renvoie encore, sinon le **weekly « all models »**,
+  sinon la première limite connue.
+- Dans le popover, cette ligne principale garde la mise en forme de l'ex-session (libellé en
+  gras, estimation « empty ~HH:MM » si le rythme le permet).
+
 ## 1.6.2 — 2026-10-26
 
 ### Le nombre s'atténue comme les icônes natives
