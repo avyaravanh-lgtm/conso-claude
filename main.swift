@@ -965,8 +965,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func pushToWeb(animate: Bool) {
         let eta = sessionEta()
+        // La ligne principale (ex-session, désormais le weekly « all models ») garde la
+        // DA de la session : libellé en gras et ETA inline. On la repère par position.
+        let primaryIdx = primaryLimit(in: state.limits).flatMap { p in
+            state.limits.firstIndex(where: { $0.kind == p.kind && $0.label == p.label })
+        }
         var limitsJSON: [[String: Any]] = []
-        for l in state.limits {
+        for (i, l) in state.limits.enumerated() {
+            let isPrimary = i == primaryIdx
             limitsJSON.append([
                 "label": l.label,
                 "percent": l.percent,
@@ -975,8 +981,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 "resetEpoch": l.resetsAt.map { Int($0.timeIntervalSince1970) } ?? 0,
                 "resetFull": fmtResetFull(l.resetsAt),
                 "severity": l.severity,
-                "session": l.isSession,
-                "eta": l.isSession ? (eta ?? "") : "",
+                "session": isPrimary,
+                "eta": isPrimary ? (eta ?? "") : "",
             ])
         }
         var payload: [String: Any] = [
@@ -1245,9 +1251,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return history.filter { now - $0.t <= 24 * 3600 }.map { ["a": now - $0.t, "v": $0.v] }
     }
 
-    // Au rythme observé, quand la session sera-t-elle à sec ?
+    // Au rythme observé, quand la limite principale sera-t-elle à sec ?
     func sessionEta() -> String? {
-        guard let session = state.limits.first(where: { $0.isSession }),
+        guard let session = primaryLimit(in: state.limits),
               session.percent >= 10, session.percent < 100 else { return nil }
         // Remonter la session courante : les % ne font que monter depuis le reset.
         var pts: [(t: Double, v: Int)] = []
@@ -1806,7 +1812,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.backoffUntil = .distantPast
                 self.checkThresholds(limits)
                 self.saveCachedState()
-                if let s = limits.first(where: { $0.isSession }) {
+                if let s = self.primaryLimit(in: limits) {
                     self.recordHistory(sessionPercent: s.percent)
                 }
             } else if error != nil {
@@ -1839,6 +1845,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return img
     }
 
+    // La limite PRINCIPALE — celle que suivent la barre de menus, l'historique et l'avion.
+    // Depuis le retrait de la limite 5 h par Anthropic (nov. 2026), l'API ne renvoie plus
+    // de `session` : on retombe alors sur le weekly « all models », puis, à défaut, sur la
+    // première limite connue. La session reste prioritaire si Anthropic la réactive un jour.
+    func primaryLimit(in limits: [UsageLimit]) -> UsageLimit? {
+        limits.first(where: { $0.isSession })
+            ?? limits.first(where: { $0.kind == "weekly_all" })
+            ?? limits.first
+    }
+
     func updateStatusTitle() {
         guard let button = statusItem.button else { return }
         if state.limits.isEmpty {
@@ -1850,7 +1866,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
-        guard let session = state.limits.first(where: { $0.isSession }) else { return }
+        guard let session = primaryLimit(in: state.limits) else { return }
         // On affiche le % RESTANT (100 − consommé), cohérent avec l'avion (« il te reste X % »).
         // Pas de dégradé de couleur : teinte système tout du long, rouge seulement à ≤ 10 %.
         let remaining = 100 - session.percent
