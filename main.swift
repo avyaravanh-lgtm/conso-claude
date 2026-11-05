@@ -518,10 +518,14 @@ function render(d, animate) {
   startTicker();
   // Le message d'erreur et le bloc de connexion ne coexistent pas : quand on
   // propose de se connecter, l'instruction se suffit à elle-même.
-  $('err').hidden = !d.error || d.needsLogin;
-  $('err').textContent = d.error || '';
-  // Attente calme (jeton expiré) en gris ; vraie erreur en orange.
-  $('err').classList.toggle('calm', !!d.calm);
+  // Note calme de reconnexion : jeton propre expiré, on tourne sur le repli Claude Code.
+  // Les chiffres restent justes — elle ne s'affiche que faute de vraie erreur ou d'attente.
+  const showReconnect = d.reconnect && !d.needsLogin && !d.error;
+  $('err').hidden = (!d.error && !showReconnect) || d.needsLogin;
+  $('err').textContent = d.error
+    || (showReconnect ? 'Autonomous access expired — right-click the icon to reconnect.' : '');
+  // Attente calme (jeton expiré) OU note de reconnexion en gris ; vraie erreur en orange.
+  $('err').classList.toggle('calm', !!d.calm || showReconnect);
   const lg = $('login');
   lg.hidden = !d.needsLogin;
   // Contenu figé (aucune donnée utilisateur) → innerHTML sûr.
@@ -766,6 +770,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // attend que Claude Code en pose un autre — sinon on bouclerait sur le même 401.
     var lastRejectedToken: String?
 
+    // Jeton PROPRE de Conso devenu inutilisable : son refresh token a une durée de vie
+    // ABSOLUE (~30 j) que la rotation ne prolonge pas (constaté 05/11/2026). Au-delà,
+    // `refreshConsoToken` reçoit `invalid_grant` et l'app retombe sur le repli lecture
+    // seule de Claude Code — en silence jusqu'ici. Ce drapeau rend cette bascule VISIBLE
+    // (ligne de menu + note calme du popover) pour inviter à se reconnecter. Vrai UNIQUEMENT
+    // quand une entrée Conso existe mais ne se renouvelle plus ; jamais quand il n'y a pas
+    // d'entrée du tout. Persisté pour être juste dès le lancement, avant le premier fetch.
+    var consoTokenExpired = false
+    // Setter unique : passe par le fil principal, persiste, et rafraîchit le popover si
+    // l'état a changé. Tous les chemins de refresh/login/déconnexion l'empruntent.
+    func markConsoToken(expired: Bool) {
+        DispatchQueue.main.async {
+            guard self.consoTokenExpired != expired else { return }
+            self.consoTokenExpired = expired
+            UserDefaults.standard.set(expired, forKey: "consoTokenExpired")
+            if self.panel.isVisible { self.pushToWeb(animate: false); self.repositionPanel() }
+        }
+    }
+
     // Login indépendant de Conso (voir startLogin). `loggingIn` évite deux flux en
     // parallèle ; `loopback` garde le serveur vivant le temps du retour navigateur ;
     // `loginTimeout` abandonne si le navigateur ne revient jamais.
@@ -856,11 +879,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(refreshItem)
         menu.addItem(.separator())
 
-        // Login : une seule action. Le jeton propre de Conso est désormais le seul mode
-        // (plus de ligne d'état ni de bascule « Use Claude Code's token » : un seul choix).
+        // Jeton propre de Conso : une ligne d'ÉTAT (non cliquable) puis l'action, libellée
+        // selon le cas. Le refresh token expire à ~30 j : quand il meurt, l'app tourne sur
+        // le jeton de Claude Code et il faut se reconnecter — le menu doit le DIRE en clair
+        // (un « Sign in again » seul n'expliquait ni pourquoi ni quand le faire).
         let hasOwn = readCredsFrom(CONSO_KEYCHAIN, source: .own) != nil
-        let signIn = NSMenuItem(title: hasOwn ? "Sign in again…" : "Sign in to Conso…",
-                                action: #selector(startLogin), keyEquivalent: "")
+        let statusTitle: String
+        if !hasOwn {
+            statusTitle = "Autonomous access: not set up"
+        } else if consoTokenExpired {
+            statusTitle = "Autonomous access: expired — reconnect below"
+        } else {
+            statusTitle = "Autonomous access: active"
+        }
+        let tokenStatus = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
+        tokenStatus.isEnabled = false
+        menu.addItem(tokenStatus)
+
+        let actionTitle: String
+        if !hasOwn {
+            actionTitle = "Set up autonomous access…"
+        } else if consoTokenExpired {
+            actionTitle = "Reconnect now (sign-in expired)…"
+        } else {
+            actionTitle = "Reconnect Conso…"
+        }
+        let signIn = NSMenuItem(title: actionTitle, action: #selector(startLogin), keyEquivalent: "")
         signIn.target = self
         menu.addItem(signIn)
         menu.addItem(.separator())
@@ -946,7 +990,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let m = measuredContentHeight { return NSSize(width: 248, height: m) }
         let n = max(state.limits.count, 1)
         var h: CGFloat = 12 + CGFloat(n) * 38 + 19 + 8
-        if (state.error != nil || state.waiting) && !state.needsLogin { h += 22 }
+        if (state.error != nil || state.waiting || consoTokenExpired) && !state.needsLogin { h += 22 }
         if state.needsLogin { h += 52 }   // bloc d'info « Sign in with Claude Code »
         let spk = sparkPayload()
         if spk.count >= 3, (spk.compactMap { $0["a"] as? Double }.max() ?? 0) >= 1800 { h += 38 }
@@ -990,6 +1034,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             "stale": state.stale,
             "spark": sparkPayload(),
             "needsLogin": state.needsLogin,
+            // Jeton propre expiré (on tourne sur le repli Claude Code) : note calme invitant
+            // à se reconnecter. Les chiffres restent justes, donc rien d'alarmant.
+            "reconnect": consoTokenExpired,
             "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
         ]
         // Attente calme (jeton expiré, on attend Claude Code) : même emplacement que le
@@ -1293,6 +1340,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func loadCachedState() {
+        // Dernier état connu du jeton propre : affichable dès le lancement, puis corrigé
+        // par le premier refresh.
+        consoTokenExpired = UserDefaults.standard.bool(forKey: "consoTokenExpired")
         guard let arr = UserDefaults.standard.array(forKey: "limits") as? [[String: Any]], !arr.isEmpty else { return }
         state.limits = arr.map { d in
             let kind = d["kind"] as? String ?? "?"
@@ -1407,17 +1457,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // n'efface les chiffres. Conso avec son jeton n'est donc jamais PIRE que sans.
             var token = creds.accessToken
             var didRefresh = false   // a-t-on DÉJÀ consommé notre refresh token ce cycle ?
+            // `onOwn` : une entrée Conso existe (le jeton emprunté n'arrive qu'à défaut).
+            // Ne juge l'expiration du jeton PROPRE que dans ce cas — jamais « pas d'entrée ».
+            let onOwn = creds.source == .own
             let nowMs = Date().timeIntervalSince1970 * 1000
             let expired = creds.expiresAtMs.map { nowMs >= $0 - 60_000 } ?? false
             if expired {
-                if creds.source == .own, let fresh = self.refreshConsoToken(creds) {
+                if onOwn, let fresh = self.refreshConsoToken(creds) {
                     token = fresh; didRefresh = true   // renouvelé nous-mêmes (aucun partage, aucun risque)
+                    self.markConsoToken(expired: false)
                 } else if let borrowed = self.freshBorrowedToken() {
                     token = borrowed   // repli : jeton frais de Claude Code
+                    if onOwn { self.markConsoToken(expired: true) }   // refresh propre KO → repli visible
                 } else {
+                    if onOwn { self.markConsoToken(expired: true) }
                     self.waitForClaudeCode(reason: SESSION_WAIT_MSG, rejected: nil)
                     return
                 }
+            } else if onOwn {
+                self.markConsoToken(expired: false)   // jeton propre encore valide
             }
             let (resp, data, err) = self.performUsageRequest(token: token)
             // 401/403 : jeton révoqué ou tourné ailleurs.
@@ -1429,6 +1487,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if creds.source == .own, !didRefresh, let fresh = self.refreshConsoToken(creds), fresh != token {
                     let (r2, d2, e2) = self.performUsageRequest(token: fresh)
                     if r2?.statusCode == 401 || r2?.statusCode == 403 {
+                        self.markConsoToken(expired: true)   // jeton propre refusé même renouvelé → repli
                         if let b = self.freshBorrowedToken() {
                             let (r3, d3, e3) = self.performUsageRequest(token: b)
                             self.handleUsageResponse(resp: r3, data: d3, err: e3)
@@ -1436,12 +1495,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                             self.waitForClaudeCode(reason: SESSION_WAIT_MSG, rejected: nil)
                         }
                     } else {
+                        self.markConsoToken(expired: false)   // le jeton propre renouvelé passe
                         self.handleUsageResponse(resp: r2, data: d2, err: e2)
                     }
                 } else if let b = self.freshBorrowedToken(), b != token {
+                    if onOwn { self.markConsoToken(expired: true) }
                     let (r3, d3, e3) = self.performUsageRequest(token: b)
                     self.handleUsageResponse(resp: r3, data: d3, err: e3)
                 } else {
+                    if onOwn { self.markConsoToken(expired: true) }
                     self.waitForClaudeCode(reason: SESSION_WAIT_MSG, rejected: token)
                 }
                 return
@@ -1662,6 +1724,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         try? p.run(); p.waitUntilExit()
         oauthLog("entrée Conso supprimée → repli sur le jeton de Claude Code")
         state.needsLogin = false
+        markConsoToken(expired: false)   // plus d'entrée Conso : ce n'est pas une expiration
         refresh(force: true)
     }
 
@@ -1697,6 +1760,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if ok {
                     self.state.needsLogin = false
                     self.state.error = nil
+                    self.markConsoToken(expired: false)   // jeton propre tout neuf
                     self.refresh(force: true)
                 } else {
                     self.loginFailed("Sign-in failed — please try again.")

@@ -2,6 +2,25 @@
 
 All notable changes to Conso Claude are documented here.
 
+## 1.7.0 — 2026-11-05
+
+### Dire quand l'accès autonome a expiré
+Le jeton propre de Conso (login « autonome ») se renouvelle tout seul, mais son refresh
+token a une **durée de vie absolue d'environ 30 jours** que la rotation ne prolonge pas :
+passé ce délai, l'API répond `invalid_grant — Refresh token expired`, et l'app retombe
+**en silence** sur le jeton de Claude Code en lecture seule. Les chiffres restaient justes,
+mais rien ne disait qu'il fallait se reconnecter — et le menu « Sign in again » n'expliquait
+ni pourquoi ni quand.
+- **Le menu dit l'état en clair** : une ligne « Autonomous access: active / expired —
+  reconnect below / not set up », et l'action devient explicite selon le cas
+  (« Reconnect now (sign-in expired)… », « Reconnect Conso… », « Set up autonomous access… »).
+- **Le popover le signale** : quand on tourne sur le repli, une note grise discrète
+  « Autonomous access expired — right-click the icon to reconnect » (jamais l'orange
+  d'alerte : ce n'est pas une panne, les chiffres restent bons).
+- L'état est **mémorisé** pour être juste dès le lancement, puis corrigé par le premier
+  relevé. Il se remet à zéro dès qu'on se reconnecte ou qu'on retire le jeton propre.
+- Aucun changement au repli lui-même : Conso reste « jamais pire que sans son jeton ».
+
 ## 1.6.3 — 2026-11-02
 
 ### La barre suit la limite principale (fin des 5 h)
